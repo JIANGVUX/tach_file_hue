@@ -21,20 +21,6 @@ def safe_filename(s):
     s = re.sub(r'\s+', '_', s)
     return s.strip('_')
 
-def auto_format_excel(file_path):
-    wb = openpyxl.load_workbook(file_path)
-    for ws in wb.worksheets:
-        for cell in ws[1]:
-            cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
-            cell.font = Font(bold=True)
-        for row in ws.iter_rows():
-            for cell in row:
-                cell.alignment = Alignment(wrap_text=True, vertical='center')
-        for column_cells in ws.columns:
-            length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
-            ws.column_dimensions[column_cells[0].column_letter].width = length + 2
-    wb.save(file_path)
-
 def weekday_vn(dt):
     if pd.isna(dt): return ""
     thu = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
@@ -93,7 +79,7 @@ def upload():
 
         df_filtered.loc[len(df_filtered)] = sum_row
         df_filtered.to_excel(summary_path, index=False)
-        auto_format_excel(summary_path)
+        # auto_format_excel(summary_path)  # Tạm thời bỏ để giảm tải RAM
         os.remove(file_path)
 
         response = make_response(send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True))
