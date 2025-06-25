@@ -5,6 +5,7 @@ import os
 import re
 import traceback
 import zipfile
+import shutil
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["https://qlldhue20.weebly.com"]}}, supports_credentials=True)
@@ -35,14 +36,14 @@ def home():
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
-        for f in os.listdir(OUTPUT_FOLDER):
-            path = os.path.join(OUTPUT_FOLDER, f)
-            if os.path.isfile(path):
-                os.remove(path)
-            elif os.path.isdir(path):
-                for file in os.listdir(path):
-                    os.remove(os.path.join(path, file))
-                os.rmdir(path)
+        # Xoá dữ liệu cũ
+        if os.path.exists(OUTPUT_FOLDER):
+            for f in os.listdir(OUTPUT_FOLDER):
+                path = os.path.join(OUTPUT_FOLDER, f)
+                if os.path.isfile(path):
+                    os.remove(path)
+                elif os.path.isdir(path):
+                    shutil.rmtree(path)
 
         if 'file' not in request.files:
             return "Vui lòng chọn file!", 400
@@ -52,15 +53,18 @@ def upload():
         file.save(file_path)
 
         df = pd.read_excel(file_path, sheet_name=0, header=5)
+        df = df.dropna(how='all')  # Xoá dòng rỗng hoàn toàn
+
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
         if not col_ngay:
             return "Không tìm thấy cột ngày!", 400
 
         idx_ngay = df.columns.get_loc(col_ngay)
-        df.insert(idx_ngay, 'Đứ', df[col_ngay].apply(weekday_vn))
+        df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
 
         vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
         col_vl1_idx = df.columns.get_loc(vao_lan_1_col)
+
         mask = df.iloc[:, col_vl1_idx:].notna().any(axis=1)
         mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
         df_filtered = df[mask].copy()
@@ -68,13 +72,19 @@ def upload():
         folder_path = os.path.join(OUTPUT_FOLDER, "files")
         os.makedirs(folder_path, exist_ok=True)
 
-        for ma_nv, group in df_filtered.groupby("Mã NV"):
+        # Giới hạn số nhân viên nếu cần: ví dụ 100
+        MAX_EMPLOYEES = 100
+        employee_groups = list(df_filtered.groupby("Mã NV"))
+        if len(employee_groups) > MAX_EMPLOYEES:
+            return f"Quá nhiều nhân viên ({len(employee_groups)}), giới hạn là {MAX_EMPLOYEES}. Hãy chia nhỏ file gốc.", 400
+
+        for ma_nv, group in employee_groups:
             ten = group.iloc[0]["Họ tên"]
             print(f"⏳ Đang xử lý: {ma_nv} - {ten}")
             filename = f"{safe_filename(ma_nv)}_{safe_filename(ten)}.xlsx"
             file_out = os.path.join(folder_path, filename)
             with pd.ExcelWriter(file_out, engine="xlsxwriter") as writer:
-                group.to_excel(writer, index=False)
+                group.dropna(how='all').to_excel(writer, index=False)
 
         zip_path = os.path.join(OUTPUT_FOLDER, "Tong_hop.zip")
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
