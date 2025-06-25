@@ -73,6 +73,9 @@ def upload():
 @app.route("/download/<filename>")
 def download_file(filename):
     return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
+@app.route("/", methods=["GET"])
+def home():
+    return "Server đã chạy OK! (Flask Railway)"
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
