@@ -14,13 +14,11 @@ OUTPUT_FOLDER = 'output'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-MAX_EMPLOYEES = 100
-
 def safe_filename(s):
     s = str(s)
     s = re.sub(r'[\\/*?:"<>|]', '_', s)
     s = re.sub(r'\s+', '_', s)
-    return s.strip('_')[:31]
+    return s.strip('_')
 
 def weekday_vn(dt):
     if pd.isna(dt): return ""
@@ -32,70 +30,56 @@ def weekday_vn(dt):
 
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Server hoạt động!"
+    return "Server đã chạy OK!"
 
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
-        # Cleanup cũ
         for f in os.listdir(OUTPUT_FOLDER):
             path = os.path.join(OUTPUT_FOLDER, f)
-            if os.path.isdir(path):
-                for subf in os.listdir(path):
-                    os.remove(os.path.join(path, subf))
-                os.rmdir(path)
-            else:
+            if os.path.isfile(path):
                 os.remove(path)
+            elif os.path.isdir(path):
+                for file in os.listdir(path):
+                    os.remove(os.path.join(path, file))
+                os.rmdir(path)
 
         if 'file' not in request.files:
             return "Vui lòng chọn file!", 400
 
         file = request.files['file']
-        filename = safe_filename(file.filename)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        file_path = os.path.join(UPLOAD_FOLDER, safe_filename(file.filename))
         file.save(file_path)
 
         df = pd.read_excel(file_path, sheet_name=0, header=5)
-
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
         if not col_ngay:
             return "Không tìm thấy cột ngày!", 400
+
         idx_ngay = df.columns.get_loc(col_ngay)
-        df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
+        df.insert(idx_ngay, 'Đứ', df[col_ngay].apply(weekday_vn))
 
         vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
-        if vao_lan_1_col is None:
-            return 'Không tìm thấy cột "Vào lần 1"!', 400
-
         col_vl1_idx = df.columns.get_loc(vao_lan_1_col)
         mask = df.iloc[:, col_vl1_idx:].notna().any(axis=1)
         mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
         df_filtered = df[mask].copy()
 
-        # Check giới hạn nhân viên
-        unique_nv = df_filtered["Mã NV"].nunique()
-        if unique_nv > MAX_EMPLOYEES:
-            return f"Quá nhiều nhân viên ({unique_nv}), vui lòng chia nhỏ file (tối đa {MAX_EMPLOYEES}).", 400
+        folder_path = os.path.join(OUTPUT_FOLDER, "files")
+        os.makedirs(folder_path, exist_ok=True)
 
         for ma_nv, group in df_filtered.groupby("Mã NV"):
             ten = group.iloc[0]["Họ tên"]
             print(f"⏳ Đang xử lý: {ma_nv} - {ten}")
-            folder_name = safe_filename(f"{ma_nv}_{ten}")
-            folder_path = os.path.join(OUTPUT_FOLDER, folder_name)
-            os.makedirs(folder_path, exist_ok=True)
-            file_out = os.path.join(folder_path, f"{folder_name}.xlsx")
+            filename = f"{safe_filename(ma_nv)}_{safe_filename(ten)}.xlsx"
+            file_out = os.path.join(folder_path, filename)
             with pd.ExcelWriter(file_out, engine="xlsxwriter") as writer:
                 group.to_excel(writer, index=False)
 
-        # Nén zip
         zip_path = os.path.join(OUTPUT_FOLDER, "Tong_hop.zip")
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(OUTPUT_FOLDER):
-                for file in files:
-                    if file.endswith(".xlsx"):
-                        full_path = os.path.join(root, file)
-                        arcname = os.path.relpath(full_path, OUTPUT_FOLDER)
-                        zipf.write(full_path, arcname)
+            for f in os.listdir(folder_path):
+                zipf.write(os.path.join(folder_path, f), arcname=f)
 
         os.remove(file_path)
 
