@@ -36,7 +36,6 @@ def home():
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
-        # Xoá dữ liệu cũ
         if os.path.exists(OUTPUT_FOLDER):
             for f in os.listdir(OUTPUT_FOLDER):
                 path = os.path.join(OUTPUT_FOLDER, f)
@@ -53,14 +52,14 @@ def upload():
         file.save(file_path)
 
         df = pd.read_excel(file_path, sheet_name=0, header=5)
-        df = df.dropna(how='all')  # Xoá dòng rỗng hoàn toàn
+        df = df.dropna(how='all')
 
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
         if not col_ngay:
             return "Không tìm thấy cột ngày!", 400
 
         idx_ngay = df.columns.get_loc(col_ngay)
-        df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
+        df.insert(idx_ngay, 'Đứ', df[col_ngay].apply(weekday_vn))
 
         vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
         col_vl1_idx = df.columns.get_loc(vao_lan_1_col)
@@ -72,7 +71,6 @@ def upload():
         folder_path = os.path.join(OUTPUT_FOLDER, "files")
         os.makedirs(folder_path, exist_ok=True)
 
-        # Giới hạn số nhân viên nếu cần: ví dụ 100
         MAX_EMPLOYEES = 100
         employee_groups = list(df_filtered.groupby("Mã NV"))
         if len(employee_groups) > MAX_EMPLOYEES:
@@ -83,8 +81,25 @@ def upload():
             print(f"⏳ Đang xử lý: {ma_nv} - {ten}")
             filename = f"{safe_filename(ma_nv)}_{safe_filename(ten)}.xlsx"
             file_out = os.path.join(folder_path, filename)
+            group_clean = group.dropna(how='all')
+
             with pd.ExcelWriter(file_out, engine="xlsxwriter") as writer:
-                group.dropna(how='all').to_excel(writer, index=False)
+                group_clean.to_excel(writer, index=False, sheet_name="Sheet1")
+                workbook  = writer.book
+                worksheet = writer.sheets["Sheet1"]
+
+                header_format = workbook.add_format({
+                    'bold': True,
+                    'text_wrap': True,
+                    'valign': 'center',
+                    'align': 'center',
+                    'border': 1
+                })
+
+                for col_num, value in enumerate(group_clean.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+                    max_len = max(group_clean[value].astype(str).map(len).max(), len(str(value)))
+                    worksheet.set_column(col_num, col_num, max_len + 2)
 
         zip_path = os.path.join(OUTPUT_FOLDER, "Tong_hop.zip")
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
