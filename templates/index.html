@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Phân tách & Lọc Excel Nhân viên</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 2em;
+        }
+
+        .center {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .result {
+            margin-top: 2em;
+        }
+
+        .alert {
+            color: red;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="center">
+        <h2>Upload file Excel để xử lý</h2>
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="alert">
+            {% for message in messages %}
+            <p>{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+        <form method="post" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".xlsx" required>
+            <button type="submit">Xử lý & Tách File</button>
+        </form>
+        {% if files %}
+        <div class="result">
+            <h3>Kết quả (bấm để tải):</h3>
+            <ul>
+                {% for file in files %}
+                <li><a href="{{ url_for('download_file', filename=file) }}">{{ file }}</a></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+</body>
+
+</html>
