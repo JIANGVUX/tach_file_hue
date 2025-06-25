@@ -53,7 +53,6 @@ def upload():
         file_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(file_path)
 
-        # --- LOGIC GIỐNG NHƯ SCRIPT GỐC ---
         df = pd.read_excel(file_path, sheet_name=0, header=5)
 
         vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
@@ -70,28 +69,17 @@ def upload():
         if df_filtered.empty:
             return "Không có dữ liệu nhân viên hợp lệ sau khi lọc!", 400
 
-        # Xuất file từng người (tạo nhiều file, trả về file tổng hợp)
-        output_files = []
-        for (ma_nv, ho_ten), group in df_filtered.groupby(['Mã NV', 'Họ tên']):
-            if group.empty:
-                continue
-            file_name = f"{safe_filename(ma_nv)}_{safe_filename(ho_ten)}.xlsx"
-            path = os.path.join(OUTPUT_FOLDER, file_name)
-            group.to_excel(path, index=False)
-            auto_format_excel(path)
-            output_files.append(file_name)
-
-        # Xuất file tổng hợp
         summary_file = 'Tong_hop_loc.xlsx'
-        df_filtered.to_excel(os.path.join(OUTPUT_FOLDER, summary_file), index=False)
-        auto_format_excel(os.path.join(OUTPUT_FOLDER, summary_file))
-        output_files.append(summary_file)
-
-        # Trả file tổng hợp về (hoặc muốn: trả về đường link để tải file riêng)
+        summary_path = os.path.join(OUTPUT_FOLDER, summary_file)
+        with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
+            for (ma_nv, ho_ten), group in df_filtered.groupby(['Mã NV', 'Họ tên']):
+                sheet_name = f"{str(ma_nv)}_{str(ho_ten)}"[:31]  # Excel sheet name max 31 ký tự
+                group.to_excel(writer, index=False, sheet_name=sheet_name)
+        auto_format_excel(summary_path)
         return send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True)
-
     except Exception as e:
         return f"Lỗi xử lý file: {e}", 500
+
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
