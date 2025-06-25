@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, send_from_directory, redirect, url_for, flash
+from flask_cors import CORS     # <--- DÒNG NÀY!
 import pandas as pd
 import openpyxl
 from openpyxl.styles import Alignment, Font
@@ -8,6 +9,7 @@ import shutil
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+CORS(app)                       # <--- DÒNG NÀY!
 app.secret_key = 'supersecret'
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
@@ -37,7 +39,6 @@ def auto_format_excel(file_path):
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        # Xóa output cũ
         shutil.rmtree(OUTPUT_FOLDER)
         os.makedirs(OUTPUT_FOLDER, exist_ok=True)
         file = request.files['file']
@@ -61,7 +62,6 @@ def index():
             if df_filtered.empty:
                 flash("Không có dữ liệu nhân viên hợp lệ sau khi lọc!")
                 return redirect(request.url)
-            # Xuất file từng người
             output_files = []
             for (ma_nv, ho_ten), group in df_filtered.groupby(['Mã NV', 'Họ tên']):
                 if group.empty:
@@ -71,7 +71,6 @@ def index():
                 group.to_excel(path, index=False)
                 auto_format_excel(path)
                 output_files.append(file_name)
-            # Xuất file tổng hợp
             summary_file = 'Tong_hop_loc.xlsx'
             df_filtered.to_excel(os.path.join(OUTPUT_FOLDER, summary_file), index=False)
             auto_format_excel(os.path.join(OUTPUT_FOLDER, summary_file))
