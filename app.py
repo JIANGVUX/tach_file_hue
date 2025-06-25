@@ -14,11 +14,13 @@ OUTPUT_FOLDER = 'output'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
+MAX_EMPLOYEES = 100
+
 def safe_filename(s):
     s = str(s)
     s = re.sub(r'[\\/*?:"<>|]', '_', s)
     s = re.sub(r'\s+', '_', s)
-    return s.strip('_')[:31]  # giới hạn độ dài sheet/file
+    return s.strip('_')[:31]
 
 def weekday_vn(dt):
     if pd.isna(dt): return ""
@@ -35,7 +37,7 @@ def home():
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
-        # Xóa sạch thư mục output cũ
+        # Cleanup cũ
         for f in os.listdir(OUTPUT_FOLDER):
             path = os.path.join(OUTPUT_FOLDER, f)
             if os.path.isdir(path):
@@ -45,7 +47,6 @@ def upload():
             else:
                 os.remove(path)
 
-        # Lưu file người dùng upload
         if 'file' not in request.files:
             return "Vui lòng chọn file!", 400
 
@@ -54,7 +55,6 @@ def upload():
         file_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(file_path)
 
-        # Đọc dữ liệu
         df = pd.read_excel(file_path, sheet_name=0, header=5)
 
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
@@ -72,16 +72,22 @@ def upload():
         mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
         df_filtered = df[mask].copy()
 
-        # Tạo folder riêng cho từng nhân viên + xuất file
+        # Check giới hạn nhân viên
+        unique_nv = df_filtered["Mã NV"].nunique()
+        if unique_nv > MAX_EMPLOYEES:
+            return f"Quá nhiều nhân viên ({unique_nv}), vui lòng chia nhỏ file (tối đa {MAX_EMPLOYEES}).", 400
+
         for ma_nv, group in df_filtered.groupby("Mã NV"):
             ten = group.iloc[0]["Họ tên"]
+            print(f"⏳ Đang xử lý: {ma_nv} - {ten}")
             folder_name = safe_filename(f"{ma_nv}_{ten}")
             folder_path = os.path.join(OUTPUT_FOLDER, folder_name)
             os.makedirs(folder_path, exist_ok=True)
             file_out = os.path.join(folder_path, f"{folder_name}.xlsx")
-            group.to_excel(file_out, index=False)
+            with pd.ExcelWriter(file_out, engine="xlsxwriter") as writer:
+                group.to_excel(writer, index=False)
 
-        # Tạo file zip tổng hợp
+        # Nén zip
         zip_path = os.path.join(OUTPUT_FOLDER, "Tong_hop.zip")
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for root, _, files in os.walk(OUTPUT_FOLDER):
