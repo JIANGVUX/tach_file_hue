@@ -7,7 +7,7 @@ import os
 import re
 
 app = Flask(__name__)
-CORS(app)
+CORS(app,origins=["https://qlldhue20.weebly.com", "http://qlldhue20.weebly.com"])
 
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
