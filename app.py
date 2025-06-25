@@ -2,7 +2,6 @@ from flask import Flask, request, send_from_directory, make_response
 from flask_cors import CORS
 import pandas as pd
 import openpyxl
-from openpyxl.styles import Alignment, Font
 import os
 import re
 import traceback
@@ -19,13 +18,13 @@ def safe_filename(s):
     s = str(s)
     s = re.sub(r'[\\/*?:"<>|]', '_', s)
     s = re.sub(r'\s+', '_', s)
-    return s.strip('_')
+    return s.strip('_')[:31]  # Excel sheet name max length
 
 def weekday_vn(dt):
     if pd.isna(dt): return ""
     thu = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
     try:
-        return thu[pd.to_datetime(dt).weekday()]
+        return thu[pd.to_datetime(dt, dayfirst=True).weekday()]
     except:
         return ""
 
@@ -70,16 +69,22 @@ def upload():
         mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
         df_filtered = df[mask].copy()
 
-        sum_row = {}
-        for i, col in enumerate(df_filtered.columns):
-            if i < luong_col_idx:
-                sum_row[col] = "" if i != 0 else "TỔNG"
-            else:
-                sum_row[col] = pd.to_numeric(df_filtered[col], errors='coerce').sum(skipna=True)
+        with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
+            for manv, df_nv in df_filtered.groupby('Mã NV'):
+                name = df_nv['Họ tên'].iloc[0]
+                sheet_name = safe_filename(f"{manv}_{name}")
+                df_nv.to_excel(writer, sheet_name=sheet_name, index=False)
 
-        df_filtered.loc[len(df_filtered)] = sum_row
-        df_filtered.to_excel(summary_path, index=False)
-        # auto_format_excel(summary_path)  # Tạm thời bỏ để giảm tải RAM
+            sum_row = {}
+            for i, col in enumerate(df_filtered.columns):
+                if i < luong_col_idx:
+                    sum_row[col] = "" if i != 0 else "TỔNG"
+                else:
+                    sum_row[col] = pd.to_numeric(df_filtered[col], errors='coerce').sum(skipna=True)
+
+            df_filtered.loc[len(df_filtered)] = sum_row
+            df_filtered.to_excel(writer, sheet_name="TỔNG HỢP", index=False)
+
         os.remove(file_path)
 
         response = make_response(send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True))
