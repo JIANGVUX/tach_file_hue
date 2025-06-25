@@ -8,9 +8,7 @@ import re
 import traceback
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True, origins=[
-    "https://qlldhue20.weebly.com"
-])
+CORS(app, resources={r"/*": {"origins": ["https://qlldhue20.weebly.com"]}}, supports_credentials=True)
 
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
