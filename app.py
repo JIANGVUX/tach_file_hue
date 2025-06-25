@@ -4,8 +4,8 @@ import pandas as pd
 import os
 import re
 import traceback
+import zipfile
 import shutil
-from datetime import datetime
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["https://qlldhue20.weebly.com"]}}, supports_credentials=True)
@@ -36,8 +36,14 @@ def home():
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
-        shutil.rmtree(OUTPUT_FOLDER, ignore_errors=True)
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        # Xoá dữ liệu cũ
+        if os.path.exists(OUTPUT_FOLDER):
+            for f in os.listdir(OUTPUT_FOLDER):
+                path = os.path.join(OUTPUT_FOLDER, f)
+                if os.path.isfile(path):
+                    os.remove(path)
+                elif os.path.isdir(path):
+                    shutil.rmtree(path)
 
         if 'file' not in request.files:
             return "Vui lòng chọn file!", 400
@@ -47,7 +53,7 @@ def upload():
         file.save(file_path)
 
         df = pd.read_excel(file_path, sheet_name=0, header=5)
-        df = df.dropna(how='all')
+        df = df.dropna(how='all')  # Xoá dòng rỗng hoàn toàn
 
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
         if not col_ngay:
@@ -56,50 +62,45 @@ def upload():
         idx_ngay = df.columns.get_loc(col_ngay)
         df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
 
-        col_ma_nv = 'Mã NV'
-        col_ho_ten = 'Họ tên'
+        vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
+        col_vl1_idx = df.columns.get_loc(vao_lan_1_col)
 
-        if col_ma_nv not in df.columns or col_ho_ten not in df.columns:
-            return "Không tìm thấy cột Mã NV hoặc Họ tên", 400
-
-        df = df[df[col_ma_nv].notna() & df[col_ho_ten].notna()].copy()
+        mask = df.iloc[:, col_vl1_idx:].notna().any(axis=1)
+        mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
+        df_filtered = df[mask].copy()
 
         output_file = os.path.join(OUTPUT_FOLDER, "Tong_hop.xlsx")
-
-        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
             workbook = writer.book
             worksheet = workbook.add_worksheet("Tổng hợp")
             writer.sheets["Tổng hợp"] = worksheet
 
-            bold_format = workbook.add_format({'bold': True})
-            wrap_format = workbook.add_format({'text_wrap': True})
+            header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'center'})
 
-            row_idx = 0
-            for ma_nv, group in df.groupby(col_ma_nv):
-                ho_ten = group.iloc[0][col_ho_ten]
-                print(f"⏳ Đang xử lý: {ma_nv} - {ho_ten}")
+            columns = df_filtered.columns.tolist()
+            for col_idx, col_name in enumerate(columns):
+                worksheet.write(0, col_idx, col_name, header_format)
 
-                group = group.dropna(how='all')
-                group.reset_index(drop=True, inplace=True)
-
-                # Ghi header
-                if row_idx == 0:
-                    for col_idx, col_name in enumerate(group.columns):
-                        worksheet.write(row_idx, col_idx, col_name, bold_format)
-                    row_idx += 1
+            row_idx = 1
+            for ma_nv, group in df_filtered.groupby("Mã NV"):
+                ten = group.iloc[0]["Họ tên"]
+                print(f"⏳ Đang xử lý: {ma_nv} - {ten}")
 
                 for i in range(len(group)):
-                    for j in range(len(group.columns)):
-                        worksheet.write(row_idx, j, group.iat[i, j])
+                    for j in range(len(columns)):
+                        value = group.iat[i, j]
+                        if pd.isna(value) or value in [float("inf"), float("-inf")]:
+                            value = ""
+                        worksheet.write(row_idx, j, value)
                     row_idx += 1
 
-                # Ghi dòng TỔNG sau mỗi nhóm
-                worksheet.write(row_idx, 0, "TỔNG", bold_format)
-                for j in range(len(group.columns)):
-                    col_data = group.iloc[:, j]
-                    if pd.api.types.is_numeric_dtype(col_data):
-                        worksheet.write(row_idx, j, col_data.sum(), bold_format)
-                row_idx += 2  # chỉnh giá trị 2 dể cách
+                # Tính tổng cho cột số học
+                worksheet.write(row_idx, 0, "Tổng")
+                for j in range(len(columns)):
+                    col_data = pd.to_numeric(group.iloc[:, j], errors='coerce')
+                    if col_data.notna().any():
+                        worksheet.write(row_idx, j, col_data.sum(skipna=True))
+                row_idx += 1
 
         os.remove(file_path)
 
