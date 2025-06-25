@@ -4,8 +4,8 @@ import pandas as pd
 import os
 import re
 import traceback
-import zipfile
 import shutil
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["https://qlldhue20.weebly.com"]}}, supports_credentials=True)
@@ -36,13 +36,8 @@ def home():
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
-        if os.path.exists(OUTPUT_FOLDER):
-            for f in os.listdir(OUTPUT_FOLDER):
-                path = os.path.join(OUTPUT_FOLDER, f)
-                if os.path.isfile(path):
-                    os.remove(path)
-                elif os.path.isdir(path):
-                    shutil.rmtree(path)
+        shutil.rmtree(OUTPUT_FOLDER, ignore_errors=True)
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
         if 'file' not in request.files:
             return "Vui lòng chọn file!", 400
@@ -59,56 +54,56 @@ def upload():
             return "Không tìm thấy cột ngày!", 400
 
         idx_ngay = df.columns.get_loc(col_ngay)
-        df.insert(idx_ngay, 'Đứ', df[col_ngay].apply(weekday_vn))
+        df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
 
-        vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
-        col_vl1_idx = df.columns.get_loc(vao_lan_1_col)
+        col_ma_nv = 'Mã NV'
+        col_ho_ten = 'Họ tên'
 
-        mask = df.iloc[:, col_vl1_idx:].notna().any(axis=1)
-        mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
-        df_filtered = df[mask].copy()
+        if col_ma_nv not in df.columns or col_ho_ten not in df.columns:
+            return "Không tìm thấy cột Mã NV hoặc Họ tên", 400
 
-        folder_path = os.path.join(OUTPUT_FOLDER, "files")
-        os.makedirs(folder_path, exist_ok=True)
+        df = df[df[col_ma_nv].notna() & df[col_ho_ten].notna()].copy()
 
-        MAX_EMPLOYEES = 100
-        employee_groups = list(df_filtered.groupby("Mã NV"))
-        if len(employee_groups) > MAX_EMPLOYEES:
-            return f"Quá nhiều nhân viên ({len(employee_groups)}), giới hạn là {MAX_EMPLOYEES}. Hãy chia nhỏ file gốc.", 400
+        output_file = os.path.join(OUTPUT_FOLDER, "Tong_hop.xlsx")
 
-        for ma_nv, group in employee_groups:
-            ten = group.iloc[0]["Họ tên"]
-            print(f"⏳ Đang xử lý: {ma_nv} - {ten}")
-            filename = f"{safe_filename(ma_nv)}_{safe_filename(ten)}.xlsx"
-            file_out = os.path.join(folder_path, filename)
-            group_clean = group.dropna(how='all')
+        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+            workbook = writer.book
+            worksheet = workbook.add_worksheet("Tổng hợp")
+            writer.sheets["Tổng hợp"] = worksheet
 
-            with pd.ExcelWriter(file_out, engine="xlsxwriter") as writer:
-                group_clean.to_excel(writer, index=False, sheet_name="Sheet1")
-                workbook  = writer.book
-                worksheet = writer.sheets["Sheet1"]
+            bold_format = workbook.add_format({'bold': True})
+            wrap_format = workbook.add_format({'text_wrap': True})
 
-                header_format = workbook.add_format({
-                    'bold': True,
-                    'text_wrap': True,
-                    'valign': 'center',
-                    'align': 'center',
-                    'border': 1
-                })
+            row_idx = 0
+            for ma_nv, group in df.groupby(col_ma_nv):
+                ho_ten = group.iloc[0][col_ho_ten]
+                print(f"⏳ Đang xử lý: {ma_nv} - {ho_ten}")
 
-                for col_num, value in enumerate(group_clean.columns.values):
-                    worksheet.write(0, col_num, value, header_format)
-                    max_len = max(group_clean[value].astype(str).map(len).max(), len(str(value)))
-                    worksheet.set_column(col_num, col_num, max_len + 2)
+                group = group.dropna(how='all')
+                group.reset_index(drop=True, inplace=True)
 
-        zip_path = os.path.join(OUTPUT_FOLDER, "Tong_hop.zip")
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for f in os.listdir(folder_path):
-                zipf.write(os.path.join(folder_path, f), arcname=f)
+                # Ghi header
+                if row_idx == 0:
+                    for col_idx, col_name in enumerate(group.columns):
+                        worksheet.write(row_idx, col_idx, col_name, bold_format)
+                    row_idx += 1
+
+                for i in range(len(group)):
+                    for j in range(len(group.columns)):
+                        worksheet.write(row_idx, j, group.iat[i, j])
+                    row_idx += 1
+
+                # Ghi dòng TỔNG sau mỗi nhóm
+                worksheet.write(row_idx, 0, "TỔNG", bold_format)
+                for j in range(len(group.columns)):
+                    col_data = group.iloc[:, j]
+                    if pd.api.types.is_numeric_dtype(col_data):
+                        worksheet.write(row_idx, j, col_data.sum(), bold_format)
+                row_idx += 2  # chỉnh giá trị 2 dể cách
 
         os.remove(file_path)
 
-        response = make_response(send_from_directory(OUTPUT_FOLDER, "Tong_hop.zip", as_attachment=True))
+        response = make_response(send_from_directory(OUTPUT_FOLDER, "Tong_hop.xlsx", as_attachment=True))
         response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
         response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
         return response
