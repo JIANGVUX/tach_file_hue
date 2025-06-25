@@ -1,5 +1,5 @@
 from flask import Flask, request, send_from_directory, make_response
-from flask_cors import CORS, cross_origin
+from flask_cors import CORS
 import pandas as pd
 import openpyxl
 from openpyxl.styles import Alignment, Font
@@ -7,8 +7,10 @@ import os
 import re
 
 app = Flask(__name__)
+
+# Bật CORS cho tất cả endpoint với đúng domain
 CORS(app, resources={r"/*": {"origins": [
-    "https://qlldhue20.weebly.com", 
+    "https://qlldhue20.weebly.com",
     "http://qlldhue20.weebly.com"
 ]}})
 
@@ -50,11 +52,8 @@ def home():
     return "Server đã chạy OK!"
 
 @app.route("/upload", methods=["POST", "OPTIONS"])
-@cross_origin(origins=[
-    "https://qlldhue20.weebly.com", 
-    "http://qlldhue20.weebly.com"
-])
 def upload():
+    # Đáp ứng request OPTIONS (preflight)
     if request.method == "OPTIONS":
         response = make_response()
         response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
@@ -102,6 +101,7 @@ def upload():
         auto_format_excel(summary_path)
         os.remove(file_path)
 
+        # Trả file kèm CORS header
         response = make_response(send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True))
         response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
         response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
