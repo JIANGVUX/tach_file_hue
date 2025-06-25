@@ -1,5 +1,5 @@
-from flask import Flask, request, send_from_directory
-from flask_cors import CORS
+from flask import Flask, request, send_from_directory, make_response
+from flask_cors import CORS, cross_origin
 import pandas as pd
 import openpyxl
 from openpyxl.styles import Alignment, Font
@@ -7,7 +7,10 @@ import os
 import re
 
 app = Flask(__name__)
-CORS(app,origins=["https://qlldhue20.weebly.com", "http://qlldhue20.weebly.com"])
+CORS(app, resources={r"/*": {"origins": [
+    "https://qlldhue20.weebly.com", 
+    "http://qlldhue20.weebly.com"
+]}})
 
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
@@ -46,10 +49,20 @@ def weekday_vn(dt):
 def home():
     return "Server đã chạy OK!"
 
-@app.route("/upload", methods=["POST"])
+@app.route("/upload", methods=["POST", "OPTIONS"])
+@cross_origin(origins=[
+    "https://qlldhue20.weebly.com", 
+    "http://qlldhue20.weebly.com"
+])
 def upload():
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        return response
+
     try:
-        # Chỉ xóa file tổng hợp cũ nếu tồn tại, không xóa cả thư mục
         summary_file = 'Tong_hop_loc.xlsx'
         summary_path = os.path.join(OUTPUT_FOLDER, summary_file)
         if os.path.exists(summary_path):
@@ -62,35 +75,22 @@ def upload():
         file_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(file_path)
 
-        # Đọc sheet 0, header dòng 6
         df = pd.read_excel(file_path, sheet_name=0, header=5)
-
-        # Xác định cột ngày
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
         if not col_ngay:
             return "Không tìm thấy cột ngày!", 400
-
-        # Thêm cột thứ vào bên trái cột ngày
         idx_ngay = df.columns.get_loc(col_ngay)
         df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
-
-        # Xác định cột Lương giờ 100%
         luong_col_idx = next((i for i, col in enumerate(df.columns) if "lương giờ 100%" in str(col).lower()), None)
         if luong_col_idx is None:
             return 'Không tìm thấy cột "Lương giờ 100%"!', 400
-
-        # Xác định cột Vào lần 1
         vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
         if vao_lan_1_col is None:
             return 'Không tìm thấy cột "Vào lần 1"!', 400
-
-        # Lọc: chỉ giữ dòng có dữ liệu từ cột "Vào lần 1" trở đi
         col_vl1_idx = df.columns.get_loc(vao_lan_1_col)
         mask = df.iloc[:, col_vl1_idx:].notna().any(axis=1)
         mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
         df_filtered = df[mask].copy()
-
-        # Tạo dòng tổng cộng cho các cột số từ Lương giờ 100% trở đi
         sum_row = {}
         for i, col in enumerate(df_filtered.columns):
             if i < luong_col_idx:
@@ -98,12 +98,14 @@ def upload():
             else:
                 sum_row[col] = pd.to_numeric(df_filtered[col], errors='coerce').sum(skipna=True)
         df_filtered.loc[len(df_filtered)] = sum_row
-
-        # Ghi ra file, dọn dẹp
         df_filtered.to_excel(summary_path, index=False)
         auto_format_excel(summary_path)
         os.remove(file_path)
-        return send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True)
+
+        response = make_response(send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True))
+        response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        return response
     except Exception as e:
         return f"Lỗi xử lý file: {e}", 500
 
