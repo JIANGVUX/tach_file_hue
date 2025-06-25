@@ -1,10 +1,10 @@
 from flask import Flask, request, send_from_directory, make_response
 from flask_cors import CORS
 import pandas as pd
-import openpyxl
 import os
 import re
 import traceback
+import zipfile
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": ["https://qlldhue20.weebly.com"]}}, supports_credentials=True)
@@ -18,7 +18,7 @@ def safe_filename(s):
     s = str(s)
     s = re.sub(r'[\\/*?:"<>|]', '_', s)
     s = re.sub(r'\s+', '_', s)
-    return s.strip('_')[:31]  # Excel sheet name max length
+    return s.strip('_')[:31]  # giới hạn độ dài sheet/file
 
 def weekday_vn(dt):
     if pd.isna(dt): return ""
@@ -30,16 +30,22 @@ def weekday_vn(dt):
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Server đã chạy OK!"
+    return "✅ Server hoạt động!"
 
 @app.route("/upload", methods=["POST"])
 def upload():
     try:
-        summary_file = 'Tong_hop_loc.xlsx'
-        summary_path = os.path.join(OUTPUT_FOLDER, summary_file)
-        if os.path.exists(summary_path):
-            os.remove(summary_path)
+        # Xóa sạch thư mục output cũ
+        for f in os.listdir(OUTPUT_FOLDER):
+            path = os.path.join(OUTPUT_FOLDER, f)
+            if os.path.isdir(path):
+                for subf in os.listdir(path):
+                    os.remove(os.path.join(path, subf))
+                os.rmdir(path)
+            else:
+                os.remove(path)
 
+        # Lưu file người dùng upload
         if 'file' not in request.files:
             return "Vui lòng chọn file!", 400
 
@@ -48,17 +54,14 @@ def upload():
         file_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(file_path)
 
+        # Đọc dữ liệu
         df = pd.read_excel(file_path, sheet_name=0, header=5)
+
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
         if not col_ngay:
             return "Không tìm thấy cột ngày!", 400
-
         idx_ngay = df.columns.get_loc(col_ngay)
         df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
-
-        luong_col_idx = next((i for i, col in enumerate(df.columns) if "lương giờ 100%" in str(col).lower()), None)
-        if luong_col_idx is None:
-            return 'Không tìm thấy cột "Lương giờ 100%"!', 400
 
         vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
         if vao_lan_1_col is None:
@@ -69,25 +72,28 @@ def upload():
         mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
         df_filtered = df[mask].copy()
 
-        with pd.ExcelWriter(summary_path, engine='openpyxl') as writer:
-            for manv, df_nv in df_filtered.groupby('Mã NV'):
-                name = df_nv['Họ tên'].iloc[0]
-                sheet_name = safe_filename(f"{manv}_{name}")
-                df_nv.to_excel(writer, sheet_name=sheet_name, index=False)
+        # Tạo folder riêng cho từng nhân viên + xuất file
+        for ma_nv, group in df_filtered.groupby("Mã NV"):
+            ten = group.iloc[0]["Họ tên"]
+            folder_name = safe_filename(f"{ma_nv}_{ten}")
+            folder_path = os.path.join(OUTPUT_FOLDER, folder_name)
+            os.makedirs(folder_path, exist_ok=True)
+            file_out = os.path.join(folder_path, f"{folder_name}.xlsx")
+            group.to_excel(file_out, index=False)
 
-            sum_row = {}
-            for i, col in enumerate(df_filtered.columns):
-                if i < luong_col_idx:
-                    sum_row[col] = "" if i != 0 else "TỔNG"
-                else:
-                    sum_row[col] = pd.to_numeric(df_filtered[col], errors='coerce').sum(skipna=True)
-
-            df_filtered.loc[len(df_filtered)] = sum_row
-            df_filtered.to_excel(writer, sheet_name="TỔNG HỢP", index=False)
+        # Tạo file zip tổng hợp
+        zip_path = os.path.join(OUTPUT_FOLDER, "Tong_hop.zip")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(OUTPUT_FOLDER):
+                for file in files:
+                    if file.endswith(".xlsx"):
+                        full_path = os.path.join(root, file)
+                        arcname = os.path.relpath(full_path, OUTPUT_FOLDER)
+                        zipf.write(full_path, arcname)
 
         os.remove(file_path)
 
-        response = make_response(send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True))
+        response = make_response(send_from_directory(OUTPUT_FOLDER, "Tong_hop.zip", as_attachment=True))
         response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
         response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
         return response
