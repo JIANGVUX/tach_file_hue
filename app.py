@@ -5,14 +5,12 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 import os
 import re
+import traceback
 
 app = Flask(__name__)
-
-# Bật CORS cho tất cả endpoint với đúng domain
-CORS(app, resources={r"/*": {"origins": [
-    "https://qlldhue20.weebly.com",
-    "http://qlldhue20.weebly.com"
-]}})
+CORS(app, supports_credentials=True, origins=[
+    "https://qlldhue20.weebly.com"
+])
 
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'output'
@@ -51,25 +49,18 @@ def weekday_vn(dt):
 def home():
     return "Server đã chạy OK!"
 
-@app.route("/upload", methods=["POST", "OPTIONS"])
+@app.route("/upload", methods=["POST"])
 def upload():
-    # Đáp ứng request OPTIONS (preflight)
-    if request.method == "OPTIONS":
-        response = make_response()
-        response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        return response
-
     try:
         summary_file = 'Tong_hop_loc.xlsx'
         summary_path = os.path.join(OUTPUT_FOLDER, summary_file)
         if os.path.exists(summary_path):
             os.remove(summary_path)
 
-        file = request.files['file']
-        if not file:
+        if 'file' not in request.files:
             return "Vui lòng chọn file!", 400
+
+        file = request.files['file']
         filename = safe_filename(file.filename)
         file_path = os.path.join(UPLOAD_FOLDER, filename)
         file.save(file_path)
@@ -78,36 +69,43 @@ def upload():
         col_ngay = next((col for col in df.columns if "ngày" in str(col).lower()), None)
         if not col_ngay:
             return "Không tìm thấy cột ngày!", 400
+
         idx_ngay = df.columns.get_loc(col_ngay)
         df.insert(idx_ngay, 'Thứ', df[col_ngay].apply(weekday_vn))
+
         luong_col_idx = next((i for i, col in enumerate(df.columns) if "lương giờ 100%" in str(col).lower()), None)
         if luong_col_idx is None:
             return 'Không tìm thấy cột "Lương giờ 100%"!', 400
+
         vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
         if vao_lan_1_col is None:
             return 'Không tìm thấy cột "Vào lần 1"!', 400
+
         col_vl1_idx = df.columns.get_loc(vao_lan_1_col)
         mask = df.iloc[:, col_vl1_idx:].notna().any(axis=1)
         mask &= df['Mã NV'].notna() & df['Họ tên'].notna()
         df_filtered = df[mask].copy()
+
         sum_row = {}
         for i, col in enumerate(df_filtered.columns):
             if i < luong_col_idx:
                 sum_row[col] = "" if i != 0 else "TỔNG"
             else:
                 sum_row[col] = pd.to_numeric(df_filtered[col], errors='coerce').sum(skipna=True)
+
         df_filtered.loc[len(df_filtered)] = sum_row
         df_filtered.to_excel(summary_path, index=False)
         auto_format_excel(summary_path)
         os.remove(file_path)
 
-        # Trả file kèm CORS header
         response = make_response(send_from_directory(OUTPUT_FOLDER, summary_file, as_attachment=True))
         response.headers['Access-Control-Allow-Origin'] = 'https://qlldhue20.weebly.com'
         response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
         return response
+
     except Exception as e:
-        return f"Lỗi xử lý file: {e}", 500
+        traceback.print_exc()
+        return f"Lỗi xử lý file: {str(e)}", 500
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
