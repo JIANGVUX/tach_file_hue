@@ -6,7 +6,7 @@ from openpyxl.styles import Alignment, Font
 import time
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Anh Giang Đẹp Zai - Pro - toai kho")
+st.title("Anh Jiang Đẹp Zai - Pro - toai kho")
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
@@ -116,7 +116,7 @@ if uploaded_file is not None:
         progress.empty()
 
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
-        st.download_button("Cám ơn anh Giang chưa mà Tải file Excel", output2, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Cám ơn anh Giang đi rồi mà Tải file Excel về", output2, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     st.caption(
         "- Chỉ giữ dòng từ 'Vào lần 1' trở đi có dữ liệu\n"
@@ -128,4 +128,4 @@ if uploaded_file is not None:
     )
 
 else:
-    st.info("Dạng file ra cho anh JiangPro xử lý")
+    st.info("Dí vào đây để anh JiangPro xử lý")
