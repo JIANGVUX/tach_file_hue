@@ -4,7 +4,7 @@ from io import BytesIO
 import re
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách file chấm công - Mỗi nhân viên một sheet (phải có dòng có dữ liệu từ 'Vào lần 1')")
+st.title("Tách file chấm công - Mỗi nhân viên một sheet (lọc dòng không có dữ liệu từ 'Vào lần 1')")
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
@@ -79,17 +79,16 @@ if uploaded_file is not None:
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             for (ma_nv, ho_ten), group in df.groupby(['Mã NV', 'Họ tên']):
-                # CHỈ GIỮ nếu có ÍT NHẤT 1 dòng có dữ liệu ở bất kỳ cột nào từ "Vào lần 1" trở đi
-                group_check = group[cols_check]
-                # Nếu toàn bộ đều rỗng thì bỏ qua
-                if not group_check.apply(lambda row: row.notna().any() and (row != "").any(), axis=1).any():
+                # CHỈ GIỮ lại các dòng mà từ "Vào lần 1" trở đi có ít nhất 1 ô có dữ liệu
+                filtered_group = group[group[cols_check].apply(lambda row: row.notna().any() and (row != "").any(), axis=1)]
+                if filtered_group.shape[0] == 0:
                     continue
 
                 # Thêm dòng tổng nếu muốn
-                total_row = {col: group[col].sum() if pd.api.types.is_numeric_dtype(group[col]) else "" for col in group.columns}
+                total_row = {col: filtered_group[col].sum() if pd.api.types.is_numeric_dtype(filtered_group[col]) else "" for col in filtered_group.columns}
                 total_row['Ngày'] = "Tổng"
                 total_row['Thứ'] = ""
-                group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
+                group_with_total = pd.concat([filtered_group, pd.DataFrame([total_row], columns=filtered_group.columns)], ignore_index=True)
                 # Sheet name ghép mã + tên, tránh dài quá 31 ký tự
                 sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
                 group_with_total.to_excel(writer, sheet_name=sheet_name, index=False)
@@ -97,7 +96,7 @@ if uploaded_file is not None:
         st.success("Đã tách xong! Bấm để tải file Excel tổng, mỗi nhân viên một sheet.")
         st.download_button("Tải file Excel", output, "chamcong_tach_nhanvien.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    st.caption("Chỉ nhân viên có ít nhất 1 dòng có dữ liệu từ 'Vào lần 1' trở đi mới được tạo sheet. Các cột giờ luôn là HH:mm.")
+    st.caption("Các dòng không có dữ liệu từ 'Vào lần 1' trở đi sẽ bị loại bỏ. Nếu nhân viên không còn dòng nào thì không tạo sheet.")
 
 else:
     st.info("Vui lòng upload file Excel để bắt đầu.")
