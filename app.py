@@ -89,8 +89,8 @@ if uploaded_file is not None:
     count_nv = 0
     status = st.empty()
     progress = st.progress(0)
-    yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")
-    black_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
+    yellow_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+    black_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")
     total_fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
 
     output = BytesIO()
