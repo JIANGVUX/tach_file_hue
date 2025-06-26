@@ -57,17 +57,12 @@ if uploaded_file is not None:
         st.error('Không tìm thấy cột "Vào lần 1" trong file!')
         st.stop()
     idx_vao_lan_1 = df.columns.get_loc(vao_lan_1_col)
-    cols_check = df.columns[idx_vao_lan_1:]
 
-    def dong_co_du_lieu_tu_vao_lan_1(row):
-        return row[cols_check].notna().any() and (row[cols_check] != "").any()
-    df_filtered = df[df.apply(dong_co_du_lieu_tu_vao_lan_1, axis=1)]
-    df_filtered = df_filtered[df_filtered['Mã NV'].notna() & df_filtered['Họ tên'].notna()]
-
-    if 'Ngày' not in df_filtered.columns:
+    # Không lọc dòng nào, xuất nguyên trạng từng nhân viên
+    if 'Ngày' not in df.columns:
         st.error("Không tìm thấy cột 'Ngày'!")
         st.stop()
-    ngay_idx = list(df_filtered.columns).index('Ngày')
+    ngay_idx = list(df.columns).index('Ngày')
     def convert_day(date_val):
         try:
             d = pd.to_datetime(date_val, dayfirst=True)
@@ -76,41 +71,41 @@ if uploaded_file is not None:
             }
             return weekday_map[d.weekday()]
         except: return ""
-    df_filtered.insert(ngay_idx, "Thứ", df_filtered['Ngày'].apply(convert_day))
+    df.insert(ngay_idx, "Thứ", df['Ngày'].apply(convert_day))
 
-    cols_time = [col for col in df_filtered.columns if any(key in str(col) for key in ['Vào', 'Ra'])]
+    cols_time = [col for col in df.columns if any(key in str(col) for key in ['Vào', 'Ra'])]
     for col in cols_time:
-        df_filtered[col] = df_filtered[col].apply(to_hhmm)
+        df[col] = df[col].apply(to_hhmm)
 
-    col_luong_gio_100 = next((col for col in df_filtered.columns if "Lương giờ 100%" in str(col)), None)
+    col_luong_gio_100 = next((col for col in df.columns if "Lương giờ 100%" in str(col)), None)
     if col_luong_gio_100 is None:
         st.error("Báo Anh Giang Pro toai kho xử lý ngay hép hép")
         st.stop()
-    idx_luong_gio_100 = df_filtered.columns.get_loc(col_luong_gio_100)
-    cols_sum = df_filtered.columns[idx_luong_gio_100:]
+    idx_luong_gio_100 = df.columns.get_loc(col_luong_gio_100)
+    cols_sum = df.columns[idx_luong_gio_100:]
 
     st.subheader("Dữ liệu đã lọc (chuẩn giờ phút, giữ nguyên dữ liệu, thêm cột Thứ):")
-    st.dataframe(df_filtered, use_container_width=True, height=350)
+    st.dataframe(df, use_container_width=True, height=350)
 
-    if st.button("Tách & xuất Excel từng nhân viên 1 sheet (full dữ liệu, dòng toàn bộ vùng lương giờ 100% trống sẽ bôi xám!)"):
+    if st.button("Tách & xuất Excel từng nhân viên 1 sheet (dòng từ 'Vào lần 1' trở đi trống bôi vàng nhạt)"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
         default_sheet = wb_new.active
         wb_new.remove(default_sheet)
 
-        groupby_obj = list(df_filtered.groupby(['Mã NV', 'Họ tên']))
+        groupby_obj = list(df.groupby(['Mã NV', 'Họ tên']))
         total_nv = len(groupby_obj)
         count_nv = 0
         status = st.empty()
         progress = st.progress(0)
-        gray_fill = PatternFill(start_color="FFD9D9D9", end_color="FFD9D9D9", fill_type="solid")  # Màu xám nhạt
+        yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
             progress.progress(count_nv / total_nv)
 
-            # ===== Thêm dòng tổng cuối (giữ lại logic cũ) =====
+            # Thêm dòng tổng cuối
             total_row = {}
             for col in group.columns:
                 if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
@@ -128,14 +123,14 @@ if uploaded_file is not None:
             total_row['Thứ'] = ""
             group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
 
-            # ==== Ghi sheet NV với full dữ liệu ====
+            # Ghi sheet NV với full dữ liệu
             sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
             ws_nv = wb_new.create_sheet(title=sheet_name)
             ws_nv.append([safe_excel_value(col) for col in group_with_total.columns])
             for row in group_with_total.itertuples(index=False):
                 ws_nv.append([safe_excel_value(cell) for cell in row])
 
-            # ==== Định dạng header ====
+            # Định dạng header
             header_row = ws_nv[1]
             header_fill = PatternFill(start_color="FF8C1A", end_color="FF8C1A", fill_type="solid")
             for cell in header_row:
@@ -145,7 +140,7 @@ if uploaded_file is not None:
 
             ws_nv.freeze_panes = "A2"
 
-            # Đặt width từng cột: từ "Vào lần 1" trở đi width 8, cột trước đó auto (giữ đẹp)
+            # Đặt width từng cột: từ "Vào lần 1" trở đi width 8, cột trước đó auto
             for i, column_cells in enumerate(ws_nv.columns):
                 if i >= idx_vao_lan_1:
                     ws_nv.column_dimensions[column_cells[0].column_letter].width = 8
@@ -155,16 +150,13 @@ if uploaded_file is not None:
 
             ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
-            # ==== Định dạng các dòng còn lại + BÔI XÁM nếu dòng toàn bộ vùng lương giờ 100% trở đi là rỗng ====
+            # Định dạng các dòng còn lại + BÔI VÀNG nếu dòng từ "Vào lần 1" trở đi trống
             for idx, row in enumerate(ws_nv.iter_rows(min_row=2), start=0):
-                # Dữ liệu gốc của dòng này ở group_with_total
                 row_data = group_with_total.iloc[idx]
-                region = row_data.iloc[idx_luong_gio_100:]
+                region = row_data.iloc[idx_vao_lan_1:]
                 if all((pd.isna(x) or str(x).strip() == "") for x in region):
-                    # Toàn bộ vùng "Lương giờ 100%" trở đi là trống, bôi xám dòng
                     for cell in row:
-                        cell.fill = gray_fill
-                # Định dạng wrap text và căn giữa cho tất cả
+                        cell.fill = yellow_fill
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
 
@@ -174,7 +166,7 @@ if uploaded_file is not None:
         progress.empty()
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
         st.download_button(
-            "Tải file Excel tổng hợp (full dữ liệu, dòng vùng lương giờ 100% trống bôi xám!)",
+            "Tải file Excel tổng hợp (full dữ liệu, dòng vùng 'Vào lần 1' trở đi trống bôi vàng!)",
             output,
             "output_tong_hop.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
