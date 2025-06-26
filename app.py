@@ -81,7 +81,7 @@ if uploaded_file is not None:
     st.subheader("Dữ liệu đã lọc (giữ nguyên, thêm cột Thứ):")
     st.dataframe(df, use_container_width=True, height=350)
 
-    if st.button("Tách & xuất Excel từng nhân viên (dòng vùng 'Vào lần 1' đến 'Ra lần 2' trống bôi vàng!)"):
+    if st.button("Tách & xuất Excel từng nhân viên (bôi vàng ô thiếu vùng vào lần 1 - ra lần 2)"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
         default_sheet = wb_new.active
@@ -95,7 +95,7 @@ if uploaded_file is not None:
         yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            # 1. BỎ QUA nếu nhân viên này không có 1 dòng nào vùng 'Vào lần 1' trở đi có dữ liệu
+            # 1. BỎ QUA nếu tất cả các dòng vùng 'Vào lần 1' trở đi đều trống
             region_all = group.iloc[:, idx_vao_lan_1:]
             check_data = region_all.notna().any(axis=1) | (region_all != "").any(axis=1)
             if not check_data.any():
@@ -105,7 +105,7 @@ if uploaded_file is not None:
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
             progress.progress(count_nv / total_nv)
 
-            group_with_total = group.copy()  # Không thêm dòng tổng
+            group_with_total = group.copy()
 
             # Ghi sheet NV với full dữ liệu
             sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
@@ -134,16 +134,14 @@ if uploaded_file is not None:
 
             ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
-            # Định dạng các dòng còn lại
+            # Định dạng từng dòng - bôi vàng những ô vùng "Vào lần 1" đến "Ra lần 2" bị thiếu
             for idx, row in enumerate(ws_nv.iter_rows(min_row=2), start=0):
                 row_data = group_with_total.iloc[idx]
                 region = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
-                if all((pd.isna(x) or str(x).strip() == "") for x in region):
-                    # Bôi vàng vùng này (từ "Vào lần 1" đến "Ra lần 2")
-                    for col_idx in range(idx_vao_lan_1, idx_ra_lan_2 + 1):
-                        cell = ws_nv.cell(row=idx + 2, column=col_idx + 1)
+                for offset, value in enumerate(region):
+                    cell = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1 + offset)
+                    if pd.isna(value) or str(value).strip() == "":
                         cell.fill = yellow_fill
-                # Các ô đều wrap text và căn giữa
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
 
@@ -153,7 +151,7 @@ if uploaded_file is not None:
         progress.empty()
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{count_nv}**")
         st.download_button(
-            "Tải file Excel tổng hợp (chuẩn yêu cầu!)",
+            "Tải file Excel tổng hợp (bôi vàng ô thiếu vùng vào lần 1 - ra lần 2)",
             output,
             "output_tong_hop.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
