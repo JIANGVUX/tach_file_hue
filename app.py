@@ -81,7 +81,7 @@ if uploaded_file is not None:
     st.subheader("Dữ liệu đã lọc (giữ nguyên, thêm cột Thứ):")
     st.dataframe(df, use_container_width=True, height=350)
 
-    if st.button("Tách & xuất Excel từng nhân viên (dòng trống vùng 'Vào lần 1' đến 'Ra lần 2' thì merge ghi 'Nghỉ')"):
+    if st.button("Tách & xuất Excel từng nhân viên (dòng vùng 'Vào lần 1' đến 'Ra lần 2' trống bôi vàng!)"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
         default_sheet = wb_new.active
@@ -92,18 +92,20 @@ if uploaded_file is not None:
         count_nv = 0
         status = st.empty()
         progress = st.progress(0)
-        black_fill = PatternFill(start_color="FF000000", end_color="FF000000", fill_type="solid")
+        yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            # Kiểm tra nếu tất cả các dòng vùng 'Vào lần 1' trở đi đều trống thì bỏ qua nhân viên này
-            check_region = group.iloc[:, idx_vao_lan_1:]
-            if not check_region.notna().any(axis=None) and not (check_region != "").any(axis=None):
-                continue
+            # 1. BỎ QUA nếu nhân viên này không có 1 dòng nào vùng 'Vào lần 1' trở đi có dữ liệu
+            region_all = group.iloc[:, idx_vao_lan_1:]
+            check_data = region_all.notna().any(axis=1) | (region_all != "").any(axis=1)
+            if not check_data.any():
+                continue  # Bỏ qua người này
+
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
             progress.progress(count_nv / total_nv)
 
-            group_with_total = group.copy()  # Không thêm dòng tổng vì không hợp với logic này
+            group_with_total = group.copy()  # Không thêm dòng tổng
 
             # Ghi sheet NV với full dữ liệu
             sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
@@ -132,27 +134,18 @@ if uploaded_file is not None:
 
             ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
-            # Định dạng các dòng còn lại + merge ghi "Nghỉ" nếu vùng "Vào lần 1" đến "Ra lần 2" đều trống
+            # Định dạng các dòng còn lại
             for idx, row in enumerate(ws_nv.iter_rows(min_row=2), start=0):
                 row_data = group_with_total.iloc[idx]
                 region = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
                 if all((pd.isna(x) or str(x).strip() == "") for x in region):
-                    # Merge các ô vùng này
-                    start_col = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1).column_letter
-                    end_col = ws_nv.cell(row=idx + 2, column=idx_ra_lan_2 + 1).column_letter
-                    ws_nv.merge_cells(f"{start_col}{idx + 2}:{end_col}{idx + 2}")
-                    cell_ghi_nghi = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1)
-                    cell_ghi_nghi.value = "Nghỉ"
-                    cell_ghi_nghi.fill = black_fill
-                    cell_ghi_nghi.font = Font(bold=True, color="FFFFFF")
-                    cell_ghi_nghi.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
-                    # Các ô còn lại vẫn căn giữa, không có giá trị
-                    for c in row:
-                        if c.column < idx_vao_lan_1 + 1 or c.column > idx_ra_lan_2 + 1:
-                            c.alignment = Alignment(wrap_text=True, vertical='center')
-                else:
-                    for cell in row:
-                        cell.alignment = Alignment(wrap_text=True, vertical='center')
+                    # Bôi vàng vùng này (từ "Vào lần 1" đến "Ra lần 2")
+                    for col_idx in range(idx_vao_lan_1, idx_ra_lan_2 + 1):
+                        cell = ws_nv.cell(row=idx + 2, column=col_idx + 1)
+                        cell.fill = yellow_fill
+                # Các ô đều wrap text và căn giữa
+                for cell in row:
+                    cell.alignment = Alignment(wrap_text=True, vertical='center')
 
         wb_new.save(output)
         output.seek(0)
@@ -160,7 +153,7 @@ if uploaded_file is not None:
         progress.empty()
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{count_nv}**")
         st.download_button(
-            "Tải file Excel tổng hợp (merge Nghỉ đúng chuẩn!)",
+            "Tải file Excel tổng hợp (chuẩn yêu cầu!)",
             output,
             "output_tong_hop.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
