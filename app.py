@@ -6,7 +6,7 @@ from openpyxl.styles import Alignment, Font
 import time
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách file chấm công - Báo tiến trình & tổng nhân viên được tách sheet")
+st.title("Anh Giang Đẹp Zai - Pro - toai kho")
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
@@ -18,9 +18,9 @@ if uploaded_file is not None:
         st.error('Không tìm thấy cột "Vào lần 1" trong file!')
         st.stop()
     idx_vao_lan_1 = df.columns.get_loc(vao_lan_1_col)
-    cols_check = df.columns[idx_vao_lan_1:]  # Từ "Vào lần 1" trở đi
+    cols_check = df.columns[idx_vao_lan_1:]
 
-    # Lọc dòng mà từ cột "Vào lần 1" trở đi có dữ liệu
+    # Lọc dòng có dữ liệu từ "Vào lần 1" trở đi
     def dong_co_du_lieu_tu_vao_lan_1(row):
         return row[cols_check].notna().any() and (row[cols_check] != "").any()
     df_filtered = df[df.apply(dong_co_du_lieu_tu_vao_lan_1, axis=1)]
@@ -48,16 +48,16 @@ if uploaded_file is not None:
             return ""
     df_filtered.insert(ngay_idx, "Thứ", df_filtered['Ngày'].apply(convert_day))
 
-    # Tìm cột "Lương ngày 100%" để xác định vùng tổng
-    luong_100_col = next((col for col in df_filtered.columns if "Lương ngày 100%" in str(col)), None)
-    if luong_100_col is None:
-        st.error('Không tìm thấy cột "Lương ngày 100%" trong file!')
-        st.stop()
-    idx_luong_100 = df_filtered.columns.get_loc(luong_100_col)
-    cols_sum = df_filtered.columns[idx_luong_100:]  # Tổng từ "Lương ngày 100%" trở đi
-
     st.subheader("Dữ liệu đã lọc, thêm cột Thứ:")
     st.dataframe(df_filtered, use_container_width=True, height=350)
+
+    # TÌM cột "Lương giờ 100%"
+    col_luong_gio_100 = next((col for col in df_filtered.columns if "Lương giờ 100%" in str(col)), None)
+    if col_luong_gio_100 is None:
+        st.error("Báo Anh Giang Pro toai kho xử lý ngay hép hép")
+        st.stop()
+    idx_luong_gio_100 = df_filtered.columns.get_loc(col_luong_gio_100)
+    cols_sum = df_filtered.columns[idx_luong_gio_100:]  # Tính tổng từ cột "Lương giờ 100%" trở đi
 
     if st.button("Tách và xuất Excel tổng (mỗi nhân viên 1 sheet)"):
         output = BytesIO()
@@ -72,18 +72,24 @@ if uploaded_file is not None:
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             for (ma_nv, ho_ten), group in groupby_obj:
                 count_nv += 1
-                # Báo trạng thái, update progress bar
                 status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
                 progress.progress(count_nv / total_nv)
 
-                # Tính tổng các cột từ "Lương ngày 100%" trở đi
-                total_row = {col: group[col].sum() if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]) else "" for col in group.columns}
+                # Tính tổng các cột từ "Lương giờ 100%" trở đi (chỉ cộng cột có dữ liệu)
+                total_row = {}
+                for col in group.columns:
+                    if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
+                        if group[col].notna().any():
+                            total_row[col] = group[col].sum()
+                        else:
+                            total_row[col] = ""
+                    else:
+                        total_row[col] = ""
                 total_row['Ngày'] = "Tổng"
                 total_row['Thứ'] = ""
                 group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
                 sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
                 group_with_total.to_excel(writer, sheet_name=sheet_name, index=False)
-                # Giả lập xử lý lâu hơn nếu muốn test loading: time.sleep(0.1)
 
         output.seek(0)
 
@@ -110,15 +116,16 @@ if uploaded_file is not None:
         progress.empty()
 
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
-        st.download_button("Tải file Excel", output2, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("Cám ơn anh Giang chưa mà Tải file Excel", output2, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     st.caption(
         "- Chỉ giữ dòng từ 'Vào lần 1' trở đi có dữ liệu\n"
         "- Thêm cột Thứ vào trước cột Ngày\n"
-        "- Tổng các cột từ 'Lương ngày 100%' trở đi (nếu là số)\n"
+        "- Tổng các cột từ 'Lương giờ 100%' trở đi, chỉ cộng nếu có dữ liệu\n"
         "- Báo trạng thái & progress trong quá trình xử lý\n"
+        "- Nếu đổi cấu trúc file, báo Anh Giang Pro toai kho xử lý ngay hép hép\n"
         "- Mỗi nhân viên 1 sheet, format chuẩn"
     )
 
 else:
-    st.info("Vui lòng upload file Excel để bắt đầu.")
+    st.info("Dạng file ra cho anh JiangPro xử lý")
