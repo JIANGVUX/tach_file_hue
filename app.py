@@ -4,7 +4,7 @@ from io import BytesIO
 import re
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách file chấm công - Mỗi nhân viên một sheet, 1 file Excel duy nhất (HH:mm)")
+st.title("Tách file chấm công - Mỗi nhân viên một sheet (phải có dòng có dữ liệu từ 'Vào lần 1')")
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
@@ -33,7 +33,7 @@ if uploaded_file is not None:
             return ""
     df.insert(ngay_idx, "Thứ", df['Ngày'].apply(convert_day))
 
-    # Chuẩn hóa giờ về HH:mm
+    # Chuẩn hóa giờ về HH:mm (bỏ giây)
     def to_hhmm(val):
         if pd.isna(val):
             return ""
@@ -64,17 +64,28 @@ if uploaded_file is not None:
     for col in time_cols:
         df[col] = df[col].apply(to_hhmm)
 
-    st.subheader("Dữ liệu sau khi chuẩn hóa (HH:mm):")
+    st.subheader("Dữ liệu đã chuẩn hóa (HH:mm):")
     st.dataframe(df, use_container_width=True, height=350)
 
-    # Khi bấm nút, xuất 1 file Excel với mỗi sheet là 1 nhân viên
+    # Xác định vị trí cột 'Vào lần 1'
+    vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
+    if vao_lan_1_col is None:
+        st.error('Không tìm thấy cột "Vào lần 1" trong file!')
+        st.stop()
+    idx_vao_lan_1 = df.columns.get_loc(vao_lan_1_col)
+    cols_check = df.columns[idx_vao_lan_1:]  # Từ "Vào lần 1" trở đi
+
     if st.button("Tách và xuất Excel mỗi nhân viên 1 sheet"):
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             for (ma_nv, ho_ten), group in df.groupby(['Mã NV', 'Họ tên']):
-                if len(group) == 0:
+                # CHỈ GIỮ nếu có ÍT NHẤT 1 dòng có dữ liệu ở bất kỳ cột nào từ "Vào lần 1" trở đi
+                group_check = group[cols_check]
+                # Nếu toàn bộ đều rỗng thì bỏ qua
+                if not group_check.apply(lambda row: row.notna().any() and (row != "").any(), axis=1).any():
                     continue
-                # Thêm dòng tổng nếu muốn (tùy bạn)
+
+                # Thêm dòng tổng nếu muốn
                 total_row = {col: group[col].sum() if pd.api.types.is_numeric_dtype(group[col]) else "" for col in group.columns}
                 total_row['Ngày'] = "Tổng"
                 total_row['Thứ'] = ""
@@ -86,7 +97,7 @@ if uploaded_file is not None:
         st.success("Đã tách xong! Bấm để tải file Excel tổng, mỗi nhân viên một sheet.")
         st.download_button("Tải file Excel", output, "chamcong_tach_nhanvien.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    st.caption("Các cột giờ/phút luôn chỉ còn HH:mm. Mỗi nhân viên là một sheet trong 1 file Excel duy nhất.")
+    st.caption("Chỉ nhân viên có ít nhất 1 dòng có dữ liệu từ 'Vào lần 1' trở đi mới được tạo sheet. Các cột giờ luôn là HH:mm.")
 
 else:
     st.info("Vui lòng upload file Excel để bắt đầu.")
