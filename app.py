@@ -95,15 +95,14 @@ if uploaded_file is not None:
         yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            region_all = group.iloc[:, idx_vao_lan_1:]
-
-            # Check: Ít nhất 1 ô trong vùng này phải có dữ liệu thực sự (không NaN, không "", không toàn dấu cách)
-            def has_real_data(x):
-                return not pd.isna(x) and str(x).strip() not in ["", "nan", "NaT", "None"]
-            has_data = region_all.applymap(has_real_data).values.sum() > 0
-
-            if not has_data:
-                continue  # BỎ QUA nhân viên này
+            # ---- KIỂM TRA BỎ QUA TUYỆT ĐỐI nếu không có dữ liệu ----
+            region = group.iloc[:, idx_vao_lan_1:]
+            flattened = pd.Series(region.values.ravel())
+            flattened = flattened[~flattened.isin([None, "", " ", "nan", "NaT", "None"])]
+            flattened = flattened[~flattened.isna()]
+            flattened = flattened[flattened.astype(str).str.strip() != ""]
+            if flattened.empty:
+                continue  # BỎ QUA người này, không xuất sheet!
 
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
@@ -141,10 +140,10 @@ if uploaded_file is not None:
             # BÔI VÀNG những ô thiếu trong vùng 'Vào lần 1' đến 'Ra lần 2'
             for idx, row in enumerate(ws_nv.iter_rows(min_row=2), start=0):
                 row_data = group_with_total.iloc[idx]
-                region = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
-                for offset, value in enumerate(region):
+                region_row = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
+                for offset, value in enumerate(region_row):
                     cell = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1 + offset)
-                    if not has_real_data(value):
+                    if pd.isna(value) or str(value).strip() in ["", "nan", "NaT", "None"]:
                         cell.fill = yellow_fill
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
