@@ -3,18 +3,45 @@ import pandas as pd
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import Alignment, Font
-import datetime
+import numpy as np
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
 st.title("Anh Jiang Đẹp Zai - Pro - toai kho")
 
+def to_hhmm(val):
+    # Chuẩn hóa mọi kiểu về hh:mm
+    if pd.isna(val): return ""
+    # time/datetime
+    if hasattr(val, "hour") and hasattr(val, "minute"):
+        return f"{int(val.hour):02}:{int(val.minute):02}"
+    s = str(val).strip()
+    # dạng 07:09:00 -> 07:09
+    if len(s) == 8 and s[2] == ':' and s[5] == ':':
+        return s[:5]
+    # dạng 7:9 hoặc 07:09
+    if ':' in s and len(s) <= 5:
+        parts = s.split(":")
+        if len(parts) == 2 and all(part.isdigit() for part in parts):
+            h, m = parts
+            return f"{int(h):02}:{int(m):02}"
+    # float kiểu excel time
+    try:
+        f = float(s)
+        if 0 <= f < 1:
+            h = int(f * 24)
+            m = int(round((f * 24 - h) * 60))
+            return f"{h:02}:{m:02}"
+    except:
+        pass
+    return s
+
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
-    # Đọc file gốc bằng openpyxl để giữ nguyên sheet
+    # --- B1: Mở workbook gốc giữ nguyên các sheet gốc ---
     wb_goc = openpyxl.load_workbook(uploaded_file)
-    ws_goc = wb_goc.active  # Sheet đầu tiên
+    sheet_names_goc = wb_goc.sheetnames
 
-    # Đọc bằng pandas để xử lý dữ liệu nhân viên (chỉ dùng để tách)
+    # --- B2: Đọc pandas từ sheet đầu để xử lý ---
     uploaded_file.seek(0)
     df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
 
@@ -65,28 +92,46 @@ if uploaded_file is not None:
     idx_luong_gio_100 = df_filtered.columns.get_loc(col_luong_gio_100)
     cols_sum = df_filtered.columns[idx_luong_gio_100:]
 
-    st.subheader("Dữ liệu đã lọc (chỉ thêm cột Thứ, không chỉnh giờ, không đổi số liệu):")
+    # Tìm cột giờ (có "Vào", "Ra" trong tên, loại "Ngày", "Thứ")
+    time_cols = [col for col in df_filtered.columns if ("Vào" in str(col) or "Ra" in str(col)) and "Ngày" not in str(col) and "Thứ" not in str(col)]
+    # Tìm cột số liệu (numeric): ngoại trừ cột giờ và cột text
+    numeric_cols = [col for col in cols_sum if pd.api.types.is_numeric_dtype(df_filtered[col])]
+
+    st.subheader("Dữ liệu đã lọc (chỉ thêm cột Thứ, không đổi số liệu!):")
     st.dataframe(df_filtered, use_container_width=True, height=350)
 
-    if st.button("Tách và xuất Excel tổng (sheet 1 = gốc, sheet 2+ = từng nhân viên)"):
-        # Tạo workbook mới, copy nguyên sheet gốc
+    if st.button("Tách và xuất Excel tổng (giữ sheet gốc, thêm sheet nhân viên)"):
+        # --- B3: Tạo workbook mới, copy toàn bộ sheet gốc sang ---
         output = BytesIO()
         wb_new = openpyxl.Workbook()
-        ws_new_goc = wb_new.active
-        ws_new_goc.title = "Du_lieu_goc"
-        # Copy từng cell giữ đúng dữ liệu gốc
-        for row in ws_goc.iter_rows():
-            ws_new_goc.append([cell.value for cell in row])
+        # Xóa sheet mặc định ban đầu
+        if "Sheet" in wb_new.sheetnames:
+            del wb_new["Sheet"]
+        # Copy tất cả sheet gốc
+        for name in sheet_names_goc:
+            ws_copy = wb_new.create_sheet(name)
+            ws_goc = wb_goc[name]
+            for row in ws_goc.iter_rows(values_only=False):
+                ws_copy.append([cell.value for cell in row])
+        # Xoá sheet trống đầu nếu cần
+        if len(wb_new.sheetnames) > len(sheet_names_goc):
+            del wb_new["Sheet"]
 
-        # Các sheet nhân viên đã xử lý
+        # --- B4: Thêm sheet nhân viên ---
         groupby_obj = list(df_filtered.groupby(['Mã NV', 'Họ tên']))
         total_nv = len(groupby_obj)
         for (ma_nv, ho_ten), group in groupby_obj:
             group = group.copy()
+            # Chuẩn hóa cột giờ về hh:mm
+            for col in time_cols:
+                group[col] = group[col].apply(to_hhmm)
+            # Làm tròn các cột số liệu
+            for col in numeric_cols:
+                group[col] = group[col].round(0).astype('Int64')  # Làm tròn tới số nguyên
             # Tính tổng cho các cột có dữ liệu từ cột "Lương giờ 100%" trở đi
             total_row = {}
             for col in group.columns:
-                if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
+                if col in numeric_cols:
                     if group[col].notna().any():
                         total_row[col] = group[col].sum()
                     else:
@@ -114,13 +159,9 @@ if uploaded_file is not None:
                 length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
                 ws_nv.column_dimensions[column_cells[0].column_letter].width = length + 2
 
-        # Xóa sheet mặc định nếu còn (openpyxl luôn tạo 1 sheet "Sheet" khi WorkBook mới)
-        if "Sheet" in wb_new.sheetnames and len(wb_new.sheetnames) > total_nv + 1:
-            del wb_new["Sheet"]
-
         wb_new.save(output)
         output.seek(0)
-        st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
+        st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}** (giữ nguyên sheet gốc và format gốc)")
         st.download_button("Tải file Excel tổng hợp (chuẩn 100% dữ liệu gốc!)", output, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 else:
