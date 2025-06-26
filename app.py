@@ -20,7 +20,6 @@ def safe_excel_value(val):
     return str(val)
 
 def to_hhmm(val):
-    # Chỉ để HH:mm (bỏ giây)
     if pd.isna(val) or val is None or str(val).strip() == "":
         return ""
     val_str = str(val).strip()
@@ -42,7 +41,6 @@ uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
 
-    # Tìm cột 'Vào lần 1'
     vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
     if vao_lan_1_col is None:
         st.error('Không tìm thấy cột "Vào lần 1" trong file!')
@@ -50,13 +48,11 @@ if uploaded_file is not None:
     idx_vao_lan_1 = df.columns.get_loc(vao_lan_1_col)
     cols_check = df.columns[idx_vao_lan_1:]
 
-    # Lọc dòng có dữ liệu từ "Vào lần 1" trở đi
     def dong_co_du_lieu_tu_vao_lan_1(row):
         return row[cols_check].notna().any() and (row[cols_check] != "").any()
     df_filtered = df[df.apply(dong_co_du_lieu_tu_vao_lan_1, axis=1)]
     df_filtered = df_filtered[df_filtered['Mã NV'].notna() & df_filtered['Họ tên'].notna()]
 
-    # Thêm cột "Thứ" vào trước "Ngày"
     if 'Ngày' not in df_filtered.columns:
         st.error("Không tìm thấy cột 'Ngày'!")
         st.stop()
@@ -71,12 +67,10 @@ if uploaded_file is not None:
         except: return ""
     df_filtered.insert(ngay_idx, "Thứ", df_filtered['Ngày'].apply(convert_day))
 
-    # Chuẩn hóa các cột giờ phút, chỉ HH:mm
     cols_time = [col for col in df_filtered.columns if any(key in str(col) for key in ['Vào', 'Ra'])]
     for col in cols_time:
         df_filtered[col] = df_filtered[col].apply(to_hhmm)
 
-    # Tìm cột "Lương giờ 100%" (bắt đầu tính tổng)
     col_luong_gio_100 = next((col for col in df_filtered.columns if "Lương giờ 100%" in str(col)), None)
     if col_luong_gio_100 is None:
         st.error("Báo Anh Giang Pro toai kho xử lý ngay hép hép")
@@ -90,25 +84,27 @@ if uploaded_file is not None:
     if st.button("Tách & xuất Excel từng nhân viên 1 sheet (bỏ sheet gốc)"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
-        # Xóa sheet mặc định
         default_sheet = wb_new.active
         wb_new.remove(default_sheet)
 
-        # Tạo trạng thái & progress
         groupby_obj = list(df_filtered.groupby(['Mã NV', 'Họ tên']))
         total_nv = len(groupby_obj)
         count_nv = 0
         status = st.empty()
         progress = st.progress(0)
 
-        # --- Tạo sheet từng nhân viên
+        # Chuẩn bị vị trí các cột cần ép width
+        col_indices_vao_lan_1 = {}
+        for i, col in enumerate(df_filtered.columns):
+            if i >= idx_vao_lan_1:
+                col_indices_vao_lan_1[col] = i
+
         for (ma_nv, ho_ten), group in groupby_obj:
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
             progress.progress(count_nv / total_nv)
 
             group = group.copy()
-            # Tính tổng cho các cột có dữ liệu từ cột "Lương giờ 100%" trở đi
             total_row = {}
             for col in group.columns:
                 if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
@@ -132,23 +128,42 @@ if uploaded_file is not None:
             ws_nv.append([safe_excel_value(col) for col in group_with_total.columns])
             for row in group_with_total.itertuples(index=False):
                 ws_nv.append([safe_excel_value(cell) for cell in row])
-            # Định dạng tiêu đề, căn giữa, auto-width
-            for cell in ws_nv[1]:
+
+            # Định dạng tiêu đề: wrap text, căn giữa, **tăng chiều cao**
+            header_row = ws_nv[1]
+            for cell in header_row:
                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
                 cell.font = Font(bold=True)
-            for row in ws_nv.iter_rows():
+            # Tự động tăng chiều cao cho dòng tiêu đề nếu dài
+            max_lines = max(str(cell.value).count('\n') + 1 if cell.value else 1 for cell in header_row)
+            ws_nv.row_dimensions[1].height = max(24, max_lines * 16)  # Cỡ chữ bình thường, nhân số dòng
+
+            # Định dạng các dòng còn lại (wrap text)
+            for row in ws_nv.iter_rows(min_row=2):
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
-            for column_cells in ws_nv.columns:
-                length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
-                ws_nv.column_dimensions[column_cells[0].column_letter].width = length + 2
+
+            # Đặt width cho từng cột
+            for i, column_cells in enumerate(ws_nv.columns):
+                col_name = group_with_total.columns[i]
+                if i >= idx_vao_lan_1:
+                    ws_nv.column_dimensions[column_cells[0].column_letter].width = 8  # chỉ vừa 4 số, dư đẹp
+                else:
+                    # Auto width với cột ngoài vùng "Vào lần 1"
+                    length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
+                    ws_nv.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 35)  # max width 35
 
         wb_new.save(output)
         output.seek(0)
         status.success(f"✅ Đã xử lý xong {total_nv} nhân viên!")
         progress.empty()
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
-        st.download_button("Tải file Excel tổng hợp (chuẩn 100% dữ liệu gốc!)", output, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            "Tải file Excel tổng hợp (chuẩn 100% dữ liệu gốc!)",
+            output,
+            "output_tong_hop.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 else:
     st.info("Đút file lên đi để anh Jiang xử lý")
