@@ -12,29 +12,24 @@ def safe_excel_value(val):
     if pd.isna(val) or val is None:
         return ""
     if isinstance(val, float):
-        # Làm tròn đến 2 chữ số sau dấu phẩy nếu là float
         return round(val, 2)
     if isinstance(val, (np.integer, int)):
         return int(val)
-    # Nếu là Timestamp/hay datetime thì format chuẩn
     if hasattr(val, "strftime"):
         return val.strftime("%Y-%m-%d")
     return str(val)
 
 def to_hhmm(val):
-    # Chỉ để HH:mm (bỏ giây), giữ y như file gốc
+    # Chỉ để HH:mm (bỏ giây)
     if pd.isna(val) or val is None or str(val).strip() == "":
         return ""
     val_str = str(val).strip()
-    # Nếu đúng HH:mm
     if pd.Series([val_str]).str.match(r'^\d{1,2}:\d{1,2}$').bool():
         h, m = val_str.split(":")
         return f"{int(h):02}:{int(m):02}"
-    # Nếu HH:mm:ss
     if pd.Series([val_str]).str.match(r'^\d{1,2}:\d{1,2}:\d{1,2}$').bool():
         h, m, _ = val_str.split(":")
         return f"{int(h):02}:{int(m):02}"
-    # Nếu kiểu 5.5 (Excel giờ, tức 5h30)
     try:
         if isinstance(val, float) and 0 <= val < 1:
             total_minutes = int(round(val * 24 * 60))
@@ -45,12 +40,6 @@ def to_hhmm(val):
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
-    # Đọc file gốc giữ nguyên mọi định dạng, sheet
-    wb_goc = openpyxl.load_workbook(uploaded_file)
-    sheet_goc_names = wb_goc.sheetnames
-
-    # Đọc lại bằng pandas để xử lý
-    uploaded_file.seek(0)
     df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
 
     # Tìm cột 'Vào lần 1'
@@ -98,31 +87,32 @@ if uploaded_file is not None:
     st.subheader("Dữ liệu đã lọc (chuẩn giờ phút, giữ nguyên dữ liệu, thêm cột Thứ):")
     st.dataframe(df_filtered, use_container_width=True, height=350)
 
-    if st.button("Tách & xuất Excel tổng (sheet 1 = gốc, sheet 2+ = từng nhân viên)"):
+    if st.button("Tách & xuất Excel từng nhân viên 1 sheet (bỏ sheet gốc)"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
         # Xóa sheet mặc định
         default_sheet = wb_new.active
         wb_new.remove(default_sheet)
 
-        # --- Copy toàn bộ sheet gốc (kể cả nhiều sheet, giữ nguyên)
-        for sheetname in sheet_goc_names:
-            ws_goc = wb_goc[sheetname]
-            ws_new_goc = wb_new.create_sheet(title=sheetname)
-            for row in ws_goc.iter_rows():
-                ws_new_goc.append([safe_excel_value(cell.value) for cell in row])
-
-        # --- Tạo sheet từng nhân viên (sau sheet gốc)
+        # Tạo trạng thái & progress
         groupby_obj = list(df_filtered.groupby(['Mã NV', 'Họ tên']))
         total_nv = len(groupby_obj)
+        count_nv = 0
+        status = st.empty()
+        progress = st.progress(0)
+
+        # --- Tạo sheet từng nhân viên
         for (ma_nv, ho_ten), group in groupby_obj:
+            count_nv += 1
+            status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
+            progress.progress(count_nv / total_nv)
+
             group = group.copy()
             # Tính tổng cho các cột có dữ liệu từ cột "Lương giờ 100%" trở đi
             total_row = {}
             for col in group.columns:
                 if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
                     if group[col].notna().any():
-                        # Làm tròn 2 số sau dấu phẩy nếu là float
                         val = group[col].sum()
                         if isinstance(val, float):
                             total_row[col] = round(val, 2)
@@ -155,6 +145,8 @@ if uploaded_file is not None:
 
         wb_new.save(output)
         output.seek(0)
+        status.success(f"✅ Đã xử lý xong {total_nv} nhân viên!")
+        progress.empty()
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
         st.download_button("Tải file Excel tổng hợp (chuẩn 100% dữ liệu gốc!)", output, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
