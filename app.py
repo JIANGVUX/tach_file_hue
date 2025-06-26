@@ -1,107 +1,87 @@
 import streamlit as st
 import pandas as pd
-import openpyxl
-from openpyxl.styles import Alignment, Font
 from io import BytesIO
-import zipfile
+import datetime
 
-st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách file chấm công từng nhân viên (Online)")
+st.set_page_config(page_title="Tách sheet nhân viên - Giữ nguyên dữ liệu", layout="wide")
+st.title("Tách từng nhân viên ra mỗi sheet (giữ nguyên dữ liệu, thêm cột Thứ)")
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
-if uploaded_file is not None:
-    # Đọc file gốc, header dòng 6 (index 5)
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
+if uploaded_file:
+    # Đọc file với header, bạn chỉnh header=0 nếu dòng đầu là tiêu đề, hoặc header=5 nếu tiêu đề ở dòng 6
+    df = pd.read_excel(uploaded_file, sheet_name=0)  # header tự động
+    
+    # Xác định vị trí cột "Ngày"
+    if "Ngày" not in df.columns:
+        st.error("Không tìm thấy cột 'Ngày' trong file Excel!")
+        st.stop()
+    ngay_idx = list(df.columns).index("Ngày")
 
-    # Xác định cột 'Vào lần 1'
-    vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
-    if vao_lan_1_col is None:
-        st.error('Không tìm thấy cột "Vào lần 1" trong file!')
+    # Thêm cột "Thứ" vào bên trái "Ngày"
+    def convert_day(date_val):
+        try:
+            d = pd.to_datetime(date_val, dayfirst=True)
+            weekday_map = {
+                0: 'Thứ 2',
+                1: 'Thứ 3',
+                2: 'Thứ 4',
+                3: 'Thứ 5',
+                4: 'Thứ 6',
+                5: 'Thứ 7',
+                6: 'Chủ nhật'
+            }
+            return weekday_map[d.weekday()]
+        except Exception:
+            return ''
+    df.insert(ngay_idx, "Thứ", df["Ngày"].apply(convert_day))
+
+    # Xác định cột "Lương giờ 100%" để tính tổng các cột sau đó
+    try:
+        col_sum_idx = list(df.columns).index("Lương giờ 100%")
+    except ValueError:
+        st.error("Không tìm thấy cột 'Lương giờ 100%' trong file Excel!")
+        st.stop()
+    cols_sum = list(df.columns)[col_sum_idx:]  # Từ cột "Lương giờ 100%" trở đi
+
+    # Nhóm theo Mã NV + Họ tên (bạn có thể thay đổi chỉ lấy theo Mã NV hoặc Họ tên nếu cần)
+    group_cols = []
+    if "Mã NV" in df.columns: group_cols.append("Mã NV")
+    if "Họ tên" in df.columns: group_cols.append("Họ tên")
+    if not group_cols:
+        st.error("Không tìm thấy cột 'Mã NV' hoặc 'Họ tên' trong file Excel!")
         st.stop()
 
-    # Hàm kiểm tra từ "Vào lần 1" trở đi có dữ liệu
-    def co_du_lieu_tu_vao_lan_1(row):
-        idx = df.columns.get_loc(vao_lan_1_col)
-        return any([not pd.isna(cell) and str(cell).strip() != '' for cell in row[idx:]])
+    df_preview = df.head(10)
+    st.subheader("Dữ liệu gốc (xem trước):")
+    st.dataframe(df_preview, use_container_width=True, height=300)
 
-    # Lọc dòng hợp lệ
-    df_filtered = df[df.apply(co_du_lieu_tu_vao_lan_1, axis=1)]
-    df_filtered = df_filtered[df_filtered['Mã NV'].notna() & df_filtered['Họ tên'].notna()]
+    # Lưu file Excel với mỗi nhân viên 1 sheet, dữ liệu giữ nguyên, chỉ thêm cột Thứ và dòng tổng
+    out_buffer = BytesIO()
+    with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
+        for keys, group in df.groupby(group_cols):
+            sheet_name = "_".join([str(k) for k in keys])[:30]
+            data_nv = group.copy()
+            # Thêm dòng tổng cuối cùng
+            total_row = {}
+            for col in data_nv.columns:
+                if col in cols_sum:
+                    total_row[col] = data_nv[col].sum()
+                else:
+                    total_row[col] = ""
+            total_row[group_cols[0]] = "Tổng"  # Hiện "Tổng" vào cột mã NV
+            data_nv = pd.concat([data_nv, pd.DataFrame([total_row])], ignore_index=True)
+            data_nv.to_excel(writer, index=False, sheet_name=sheet_name)
+    out_buffer.seek(0)
 
-    # Xử lý thêm cột thứ trong tuần
-    def convert_day(date_str):
-        try:
-            d = pd.to_datetime(date_str, dayfirst=True)
-            week_day = d.strftime('%A')
-            weekday_map = {
-                'Monday': 'Thứ 2',
-                'Tuesday': 'Thứ 3',
-                'Wednesday': 'Thứ 4',
-                'Thursday': 'Thứ 5',
-                'Friday': 'Thứ 6',
-                'Saturday': 'Thứ 7',
-                'Sunday': 'Chủ nhật'
-            }
-            return weekday_map.get(week_day, '')
-        except:
-            return ''
+    st.success("Đã tách xong!")
+    st.download_button(
+        label="Tải file kết quả (nhiều sheet, mỗi nhân viên 1 sheet)",
+        data=out_buffer,
+        file_name="tach_nhan_vien.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-    df_filtered['Thứ'] = df_filtered['Ngày'].apply(convert_day)
-
-    # Đưa cột "Thứ" sau cột "Ngày"
-    cols = list(df_filtered.columns)
-    if 'Thứ' in cols and 'Ngày' in cols:
-        cols.insert(cols.index('Ngày') + 1, cols.pop(cols.index('Thứ')))
-        df_filtered = df_filtered[cols]
-
-    # Cho user xem dữ liệu đã lọc
-    st.subheader("Dữ liệu đã lọc")
-    st.dataframe(df_filtered, use_container_width=True, height=300)
-
-    # Hàm auto format Excel
-    def auto_format_excel(file_bytes):
-        wb = openpyxl.load_workbook(file_bytes)
-        for ws in wb.worksheets:
-            for cell in ws[1]:
-                cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
-                cell.font = Font(bold=True)
-            for row in ws.iter_rows():
-                for cell in row:
-                    cell.alignment = Alignment(wrap_text=True, vertical='center')
-            for column_cells in ws.columns:
-                max_length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
-                ws.column_dimensions[column_cells[0].column_letter].width = max_length + 2
-        buf = BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-        return buf
-
-    # Xuất file từng người, nén zip cho tải về
-    if st.button("Tách file và xuất kết quả ZIP"):
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            for (ma_nv, ho_ten), group in df_filtered.groupby(['Mã NV', 'Họ tên']):
-                if len(group) == 0:
-                    continue
-                numeric_cols = group.select_dtypes(include='number').columns
-                total_row = {col: group[col].sum() if col in numeric_cols else '' for col in group.columns}
-                total_row['Ngày'] = 'Tổng'
-                if 'Thứ' in total_row: total_row['Thứ'] = ''
-                group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
-                # Xuất vào memory
-                excel_buffer = BytesIO()
-                group_with_total.to_excel(excel_buffer, index=False)
-                excel_buffer.seek(0)
-                # Format lại
-                formatted_buf = auto_format_excel(excel_buffer)
-                file_name = f'{ma_nv}_{ho_ten}'.replace(" ", "_").replace("/", "_") + '.xlsx'
-                zip_file.writestr(file_name, formatted_buf.getvalue())
-        zip_buffer.seek(0)
-        st.success("Đã tách xong! Bấm để tải file zip toàn bộ kết quả.")
-        st.download_button("Tải file ZIP kết quả", zip_buffer, "ketqua_tach_file.xlsx.zip", "application/zip")
-
-    st.caption("Nếu dữ liệu đầu vào lỗi hoặc trống, kiểm tra lại cấu trúc file gốc!")
-
+    st.caption("Dữ liệu mỗi sheet giữ nguyên, chỉ thêm cột Thứ và dòng tổng. Nếu lỗi hoặc thiếu dữ liệu, hãy kiểm tra lại cột 'Ngày', 'Lương giờ 100%', 'Mã NV', 'Họ tên'.")
 else:
     st.info("Vui lòng upload file Excel để bắt đầu.")
 
