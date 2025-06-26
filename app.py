@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import openpyxl
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
+import math
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
 st.title("Anh Jiang Đẹp Zai - Pro - toai kho")
@@ -36,6 +37,18 @@ def to_hhmm(val):
             return f"{int(h):02}:{int(m):02}"
     except: pass
     return val_str
+
+def get_header_row_height(header, width=8, font_size=11):
+    """Tính chiều cao dòng header dựa vào số ký tự và width của cột, giả định mỗi dòng ~width-1 ký tự"""
+    lines = []
+    for cell in header:
+        text = str(cell.value) if cell.value else ""
+        # Ước lượng: mỗi dòng chứa (width-1)*1.5 ký tự là wrap (Excel font 11)
+        line_len = max(1, int((width - 1) * 1.5))
+        num_lines = math.ceil(len(text) / line_len)
+        lines.append(num_lines)
+    max_lines = max(lines)
+    return max(24, max_lines * 15)
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
@@ -93,12 +106,6 @@ if uploaded_file is not None:
         status = st.empty()
         progress = st.progress(0)
 
-        # Chuẩn bị vị trí các cột cần ép width
-        col_indices_vao_lan_1 = {}
-        for i, col in enumerate(df_filtered.columns):
-            if i >= idx_vao_lan_1:
-                col_indices_vao_lan_1[col] = i
-
         for (ma_nv, ho_ten), group in groupby_obj:
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
@@ -129,29 +136,32 @@ if uploaded_file is not None:
             for row in group_with_total.itertuples(index=False):
                 ws_nv.append([safe_excel_value(cell) for cell in row])
 
-            # Định dạng tiêu đề: wrap text, căn giữa, **tăng chiều cao**
+            # ==== Định dạng header: wrap, màu, căn giữa, in đậm ====
             header_row = ws_nv[1]
+            header_fill = PatternFill(start_color="FF8C1A", end_color="FF8C1A", fill_type="solid")  # Cam đậm
             for cell in header_row:
                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
-                cell.font = Font(bold=True)
-            # Tự động tăng chiều cao cho dòng tiêu đề nếu dài
-            max_lines = max(str(cell.value).count('\n') + 1 if cell.value else 1 for cell in header_row)
-            ws_nv.row_dimensions[1].height = max(24, max_lines * 16)  # Cỡ chữ bình thường, nhân số dòng
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = header_fill
 
-            # Định dạng các dòng còn lại (wrap text)
+            # ==== Freeze header ====
+            ws_nv.freeze_panes = "A2"
+
+            # ==== Đặt width cho từng cột ====
+            for i, column_cells in enumerate(ws_nv.columns):
+                if i >= idx_vao_lan_1:
+                    ws_nv.column_dimensions[column_cells[0].column_letter].width = 8
+                else:
+                    length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
+                    ws_nv.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 35)
+
+            # ==== Tăng chiều cao dòng header tùy số dòng ====
+            ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
+
+            # ==== Định dạng các dòng còn lại ====
             for row in ws_nv.iter_rows(min_row=2):
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
-
-            # Đặt width cho từng cột
-            for i, column_cells in enumerate(ws_nv.columns):
-                col_name = group_with_total.columns[i]
-                if i >= idx_vao_lan_1:
-                    ws_nv.column_dimensions[column_cells[0].column_letter].width = 8  # chỉ vừa 4 số, dư đẹp
-                else:
-                    # Auto width với cột ngoài vùng "Vào lần 1"
-                    length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
-                    ws_nv.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 35)  # max width 35
 
         wb_new.save(output)
         output.seek(0)
