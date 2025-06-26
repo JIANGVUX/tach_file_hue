@@ -4,9 +4,10 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 from io import BytesIO
 import zipfile
+import re
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách file chấm công từng nhân viên (Online)")
+st.title("Tách file chấm công từng nhân viên (Online, dữ liệu giờ chuẩn)")
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
@@ -18,6 +19,48 @@ if uploaded_file is not None:
     if vao_lan_1_col is None:
         st.error('Không tìm thấy cột "Vào lần 1" trong file!')
         st.stop()
+
+    # Tìm tất cả các cột có kiểu giờ (thường là các cột có "Vào", "Ra", hoặc từ vị trí 'Vào lần 1' trở đi, đến khi gặp cột số)
+    time_cols = []
+    start_idx = df.columns.get_loc(vao_lan_1_col)
+    for col in df.columns[start_idx:]:
+        # Nếu là cột lương, tổng, hoặc cột số => dừng lại
+        if re.search(r'lương|tổng|sum|%', str(col), re.IGNORECASE):
+            break
+        # Nếu tên cột có "Vào" hoặc "Ra", xác định là cột giờ
+        if "Vào" in str(col) or "Ra" in str(col):
+            time_cols.append(col)
+
+    # Hàm chuẩn hóa giờ sang định dạng HH:mm:ss
+    def fix_time(val):
+        if pd.isna(val):
+            return ""
+        if isinstance(val, pd.Timestamp):
+            return val.strftime("%H:%M:%S")
+        if isinstance(val, (float, int)):  # Excel time format số thập phân
+            try:
+                total_seconds = int(round(val * 24 * 3600))
+                h = total_seconds // 3600
+                m = (total_seconds % 3600) // 60
+                s = total_seconds % 60
+                return f"{h:02}:{m:02}:{s:02}"
+            except:
+                return ""
+        val_str = str(val)
+        if re.match(r'^\d{1,2}:\d{2}$', val_str):
+            return val_str + ":00"
+        if re.match(r'^\d{1,2}:\d{2}:\d{2}$', val_str):
+            return val_str
+        # Nếu là số nguyên 4 chữ số kiểu 715 => 07:15:00
+        if re.match(r'^\d{3,4}$', val_str):
+            h = int(val_str[:-2])
+            m = int(val_str[-2:])
+            return f"{h:02}:{m:02}:00"
+        return val_str
+
+    # Áp dụng chuẩn hóa giờ cho các cột giờ
+    for col in time_cols:
+        df[col] = df[col].apply(fix_time)
 
     # Hàm kiểm tra từ "Vào lần 1" trở đi có dữ liệu
     def co_du_lieu_tu_vao_lan_1(row):
@@ -54,8 +97,8 @@ if uploaded_file is not None:
         cols.insert(cols.index('Ngày') + 1, cols.pop(cols.index('Thứ')))
         df_filtered = df_filtered[cols]
 
-    # Cho user xem dữ liệu đã lọc
-    st.subheader("Dữ liệu đã lọc")
+    # Cho user xem dữ liệu đã lọc và chuẩn hóa giờ
+    st.subheader("Dữ liệu đã lọc & chuẩn hóa giờ")
     st.dataframe(df_filtered, use_container_width=True, height=300)
 
     # Hàm auto format Excel
@@ -100,8 +143,7 @@ if uploaded_file is not None:
         st.success("Đã tách xong! Bấm để tải file zip toàn bộ kết quả.")
         st.download_button("Tải file ZIP kết quả", zip_buffer, "ketqua_tach_file.xlsx.zip", "application/zip")
 
-    st.caption("Nếu dữ liệu đầu vào lỗi hoặc trống, kiểm tra lại cấu trúc file gốc!")
+    st.caption("Tất cả các cột giờ đã chuẩn hóa về dạng HH:mm:ss. Nếu dữ liệu đầu vào lỗi hoặc trống, kiểm tra lại cấu trúc file gốc!")
 
 else:
     st.info("Vui lòng upload file Excel để bắt đầu.")
-
