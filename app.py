@@ -50,7 +50,9 @@ def get_header_row_height(header, width=8, font_size=11):
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
+    # header=5 tương ứng dòng tiêu đề ở dòng 6, dữ liệu từ dòng 7
     df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
+    st.write("Các cột trong file:", list(df.columns))
 
     vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
     ra_lan_2_col = next((col for col in df.columns if "Ra lần 2" in str(col)), None)
@@ -67,9 +69,7 @@ if uploaded_file is not None:
     def convert_day(date_val):
         try:
             d = pd.to_datetime(date_val, dayfirst=True)
-            weekday_map = {
-                0: 'Thứ 2', 1: 'Thứ 3', 2: 'Thứ 4', 3: 'Thứ 5', 4: 'Thứ 6', 5: 'Thứ 7', 6: 'Chủ nhật'
-            }
+            weekday_map = {0: 'Thứ 2', 1: 'Thứ 3', 2: 'Thứ 4', 3: 'Thứ 5', 4: 'Thứ 6', 5: 'Thứ 7', 6: 'Chủ nhật'}
             return weekday_map[d.weekday()]
         except: return ""
     df.insert(ngay_idx, "Thứ", df['Ngày'].apply(convert_day))
@@ -95,7 +95,7 @@ if uploaded_file is not None:
         yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            # --------- ĐOẠN LỌC CHUẨN XÁC TUYỆT ĐỐI ----------
+            # *** Chỉ kiểm tra từ dòng dữ liệu thứ 0 trở đi (tức là sau header)
             region = group.iloc[:, idx_vao_lan_1:]
             arr = pd.Series(region.values.ravel()).astype(str).str.strip()
             arr = arr[~arr.isin(["", "nan", "NaT", "None"])]
