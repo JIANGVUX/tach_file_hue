@@ -4,13 +4,14 @@ import openpyxl
 from openpyxl.styles import Alignment, Font
 from io import BytesIO
 import zipfile
+import re
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách file chấm công từng nhân viên (GIỮ NGUYÊN DỮ LIỆU GỐC)")
+st.title("Tách file chấm công từng nhân viên (Online, giờ chỉ còn HH:mm, cột Thứ ở bên trái Ngày)")
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
-    # Đọc file, header đúng dòng thực tế của bạn (thường là 5 hoặc 0)
+    # Đọc file, header đúng dòng thực tế (sửa header=5 nếu header ở dòng 6)
     df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
 
     # Tìm vị trí cột 'Ngày'
@@ -19,7 +20,7 @@ if uploaded_file is not None:
         st.stop()
     ngay_idx = list(df.columns).index('Ngày')
 
-    # Thêm cột "Thứ" vào bên phải cột "Ngày"
+    # Thêm cột "Thứ" vào BÊN TRÁI cột "Ngày"
     def convert_day(date_val):
         try:
             d = pd.to_datetime(date_val, dayfirst=True)
@@ -35,20 +36,51 @@ if uploaded_file is not None:
             return weekday_map[d.weekday()]
         except:
             return ""
-    df.insert(ngay_idx + 1, "Thứ", df['Ngày'].apply(convert_day))
+    df.insert(ngay_idx, "Thứ", df['Ngày'].apply(convert_day))
 
-    # Cho user xem lại đúng dữ liệu gốc + cột Thứ vừa thêm
-    st.subheader("Dữ liệu giữ nguyên như file gốc:")
+    # CHUẨN HÓA các cột giờ (chỉ còn HH:mm, bỏ giây)
+    def to_hhmm(val):
+        if pd.isna(val):
+            return ""
+        val_str = str(val).strip()
+        if re.match(r'^\d{1,2}:\d{2}$', val_str):
+            h, m = map(int, val_str.split(":"))
+            return f"{h:02}:{m:02}"
+        if re.match(r'^\d{1,2}:\d{2}:\d{2}$', val_str):
+            h, m, s = map(int, val_str.split(":"))
+            return f"{h:02}:{m:02}"
+        if re.match(r'^\d{3,4}$', val_str):
+            h = int(val_str[:-2])
+            m = int(val_str[-2:])
+            return f"{h:02}:{m:02}"
+        try:
+            val_float = float(val)
+            if 0 <= val_float < 1:
+                total_seconds = int(round(val_float * 24 * 3600))
+                h = total_seconds // 3600
+                m = (total_seconds % 3600) // 60
+                return f"{h:02}:{m:02}"
+        except:
+            pass
+        return val_str
+
+    # Áp dụng cho các cột giờ (chứa "Vào" hoặc "Ra" trong tên cột)
+    time_cols = [col for col in df.columns if any(key in str(col) for key in ['Vào', 'Ra'])]
+    for col in time_cols:
+        df[col] = df[col].apply(to_hhmm)
+
+    # Cho user xem lại dữ liệu đầu ra
+    st.subheader("Dữ liệu đã chuẩn hóa (giữ nguyên các cột, giờ chỉ còn HH:mm):")
     st.dataframe(df, use_container_width=True, height=350)
 
-    # Tách từng nhân viên và xuất ZIP (giữ nguyên mọi giá trị)
+    # Tách từng nhân viên, xuất file zip
     if st.button("Tách file và xuất ZIP"):
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             for (ma_nv, ho_ten), group in df.groupby(['Mã NV', 'Họ tên']):
                 if len(group) == 0:
                     continue
-                # Dòng tổng (nếu bạn muốn, hoặc bỏ nếu không cần)
+                # Dòng tổng nếu muốn (bạn có thể bỏ khúc này nếu không cần dòng tổng)
                 total_row = {col: group[col].sum() if pd.api.types.is_numeric_dtype(group[col]) else "" for col in group.columns}
                 total_row['Ngày'] = "Tổng"
                 total_row['Thứ'] = ""
@@ -64,7 +96,7 @@ if uploaded_file is not None:
         st.success("Đã tách xong! Bấm để tải file zip toàn bộ kết quả.")
         st.download_button("Tải file ZIP kết quả", zip_buffer, "ketqua_tach_file.xlsx.zip", "application/zip")
 
-    st.caption("Dữ liệu giờ/phút của nhân viên sẽ giữ nguyên như file gốc (nếu chỉ có HH:mm thì giữ HH:mm, không thêm :00).")
+    st.caption("Tất cả các cột giờ chỉ còn HH:mm. Cột 'Thứ' ở bên trái 'Ngày'.")
 
 else:
     st.info("Vui lòng upload file Excel để bắt đầu.")
