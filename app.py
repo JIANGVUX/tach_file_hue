@@ -95,11 +95,12 @@ if uploaded_file is not None:
         yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            # 1. BỎ QUA nếu tất cả các dòng vùng 'Vào lần 1' trở đi đều trống
+            # ---- CHẶN NGƯỜI KHÔNG CÓ DỮ LIỆU VÙNG 'Vào lần 1' TRỞ ĐI ----
             region_all = group.iloc[:, idx_vao_lan_1:]
-            check_data = region_all.notna().any(axis=1) | (region_all != "").any(axis=1)
-            if not check_data.any():
-                continue  # Bỏ qua người này
+            region_flat = region_all.values.flatten()
+            has_data = any([(not pd.isna(x)) and str(x).strip() != "" for x in region_flat])
+            if not has_data:
+                continue  # BỎ QUA NGƯỜI NÀY
 
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
