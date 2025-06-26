@@ -95,12 +95,15 @@ if uploaded_file is not None:
         yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            # Kiểm tra TRIỆT ĐỂ: nếu toàn bộ các ô từ 'Vào lần 1' trở đi đều trống, bỏ qua người này
             region_all = group.iloc[:, idx_vao_lan_1:]
-            flatten = region_all.values.flatten()
-            # Nếu tất cả đều là rỗng hoặc NaN thì không xuất
-            if not any([(not pd.isna(x)) and str(x).strip() != "" for x in flatten]):
-                continue
+
+            # Check: Ít nhất 1 ô trong vùng này phải có dữ liệu thực sự (không NaN, không "", không toàn dấu cách)
+            def has_real_data(x):
+                return not pd.isna(x) and str(x).strip() not in ["", "nan", "NaT", "None"]
+            has_data = region_all.applymap(has_real_data).values.sum() > 0
+
+            if not has_data:
+                continue  # BỎ QUA nhân viên này
 
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
@@ -141,7 +144,7 @@ if uploaded_file is not None:
                 region = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
                 for offset, value in enumerate(region):
                     cell = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1 + offset)
-                    if pd.isna(value) or str(value).strip() == "":
+                    if not has_real_data(value):
                         cell.fill = yellow_fill
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
