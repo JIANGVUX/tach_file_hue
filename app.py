@@ -95,14 +95,12 @@ if uploaded_file is not None:
         yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            # ---- KIỂM TRA BỎ QUA TUYỆT ĐỐI nếu không có dữ liệu ----
+            # --------- ĐOẠN LỌC CHUẨN XÁC TUYỆT ĐỐI ----------
             region = group.iloc[:, idx_vao_lan_1:]
-            flattened = pd.Series(region.values.ravel())
-            flattened = flattened[~flattened.isin([None, "", " ", "nan", "NaT", "None"])]
-            flattened = flattened[~flattened.isna()]
-            flattened = flattened[flattened.astype(str).str.strip() != ""]
-            if flattened.empty:
-                continue  # BỎ QUA người này, không xuất sheet!
+            arr = pd.Series(region.values.ravel()).astype(str).str.strip()
+            arr = arr[~arr.isin(["", "nan", "NaT", "None"])]
+            if arr.empty:
+                continue  # BỎ QUA nhân viên này
 
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
