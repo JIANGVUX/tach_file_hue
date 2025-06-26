@@ -53,12 +53,13 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
 
     vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
-    if vao_lan_1_col is None:
-        st.error('Không tìm thấy cột "Vào lần 1" trong file!')
+    ra_lan_2_col = next((col for col in df.columns if "Ra lần 2" in str(col)), None)
+    if vao_lan_1_col is None or ra_lan_2_col is None:
+        st.error('Không tìm thấy cột "Vào lần 1" hoặc "Ra lần 2" trong file!')
         st.stop()
     idx_vao_lan_1 = df.columns.get_loc(vao_lan_1_col)
+    idx_ra_lan_2 = df.columns.get_loc(ra_lan_2_col)
 
-    # Không lọc dòng nào, xuất nguyên trạng từng nhân viên
     if 'Ngày' not in df.columns:
         st.error("Không tìm thấy cột 'Ngày'!")
         st.stop()
@@ -77,17 +78,10 @@ if uploaded_file is not None:
     for col in cols_time:
         df[col] = df[col].apply(to_hhmm)
 
-    col_luong_gio_100 = next((col for col in df.columns if "Lương giờ 100%" in str(col)), None)
-    if col_luong_gio_100 is None:
-        st.error("Báo Anh Giang Pro toai kho xử lý ngay hép hép")
-        st.stop()
-    idx_luong_gio_100 = df.columns.get_loc(col_luong_gio_100)
-    cols_sum = df.columns[idx_luong_gio_100:]
-
-    st.subheader("Dữ liệu đã lọc (chuẩn giờ phút, giữ nguyên dữ liệu, thêm cột Thứ):")
+    st.subheader("Dữ liệu đã lọc (giữ nguyên, thêm cột Thứ):")
     st.dataframe(df, use_container_width=True, height=350)
 
-    if st.button("Tách & xuất Excel từng nhân viên 1 sheet (dòng từ 'Vào lần 1' trở đi trống bôi vàng nhạt)"):
+    if st.button("Tách & xuất Excel từng nhân viên (dòng trống vùng 'Vào lần 1' đến 'Ra lần 2' thì merge ghi 'Nghỉ')"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
         default_sheet = wb_new.active
@@ -98,30 +92,18 @@ if uploaded_file is not None:
         count_nv = 0
         status = st.empty()
         progress = st.progress(0)
-        yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
+        black_fill = PatternFill(start_color="FF000000", end_color="FF000000", fill_type="solid")
 
         for (ma_nv, ho_ten), group in groupby_obj:
+            # Kiểm tra nếu tất cả các dòng vùng 'Vào lần 1' trở đi đều trống thì bỏ qua nhân viên này
+            check_region = group.iloc[:, idx_vao_lan_1:]
+            if not check_region.notna().any(axis=None) and not (check_region != "").any(axis=None):
+                continue
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
             progress.progress(count_nv / total_nv)
 
-            # Thêm dòng tổng cuối
-            total_row = {}
-            for col in group.columns:
-                if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
-                    if group[col].notna().any():
-                        val = group[col].sum()
-                        if isinstance(val, float):
-                            total_row[col] = round(val, 2)
-                        else:
-                            total_row[col] = val
-                    else:
-                        total_row[col] = ""
-                else:
-                    total_row[col] = ""
-            total_row['Ngày'] = "Tổng"
-            total_row['Thứ'] = ""
-            group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
+            group_with_total = group.copy()  # Không thêm dòng tổng vì không hợp với logic này
 
             # Ghi sheet NV với full dữ liệu
             sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
@@ -150,23 +132,35 @@ if uploaded_file is not None:
 
             ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
-            # Định dạng các dòng còn lại + BÔI VÀNG nếu dòng từ "Vào lần 1" trở đi trống
+            # Định dạng các dòng còn lại + merge ghi "Nghỉ" nếu vùng "Vào lần 1" đến "Ra lần 2" đều trống
             for idx, row in enumerate(ws_nv.iter_rows(min_row=2), start=0):
                 row_data = group_with_total.iloc[idx]
-                region = row_data.iloc[idx_vao_lan_1:]
+                region = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
                 if all((pd.isna(x) or str(x).strip() == "") for x in region):
+                    # Merge các ô vùng này
+                    start_col = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1).column_letter
+                    end_col = ws_nv.cell(row=idx + 2, column=idx_ra_lan_2 + 1).column_letter
+                    ws_nv.merge_cells(f"{start_col}{idx + 2}:{end_col}{idx + 2}")
+                    cell_ghi_nghi = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1)
+                    cell_ghi_nghi.value = "Nghỉ"
+                    cell_ghi_nghi.fill = black_fill
+                    cell_ghi_nghi.font = Font(bold=True, color="FFFFFF")
+                    cell_ghi_nghi.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
+                    # Các ô còn lại vẫn căn giữa, không có giá trị
+                    for c in row:
+                        if c.column < idx_vao_lan_1 + 1 or c.column > idx_ra_lan_2 + 1:
+                            c.alignment = Alignment(wrap_text=True, vertical='center')
+                else:
                     for cell in row:
-                        cell.fill = yellow_fill
-                for cell in row:
-                    cell.alignment = Alignment(wrap_text=True, vertical='center')
+                        cell.alignment = Alignment(wrap_text=True, vertical='center')
 
         wb_new.save(output)
         output.seek(0)
-        status.success(f"✅ Đã xử lý xong {total_nv} nhân viên!")
+        status.success(f"✅ Đã xử lý xong {count_nv} nhân viên hợp lệ!")
         progress.empty()
-        st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
+        st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{count_nv}**")
         st.download_button(
-            "Tải file Excel tổng hợp (full dữ liệu, dòng vùng 'Vào lần 1' trở đi trống bôi vàng!)",
+            "Tải file Excel tổng hợp (merge Nghỉ đúng chuẩn!)",
             output,
             "output_tong_hop.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
