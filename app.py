@@ -118,14 +118,6 @@ if uploaded_file is not None:
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
         st.download_button("Cám ơn anh Giang đi rồi mà Tải file Excel về", output2, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    st.caption(
-        "- Chỉ giữ dòng từ 'Vào lần 1' trở đi có dữ liệu\n"
-        "- Thêm cột Thứ vào trước cột Ngày\n"
-        "- Tổng các cột từ 'Lương giờ 100%' trở đi, chỉ cộng nếu có dữ liệu\n"
-        "- Báo trạng thái & progress trong quá trình xử lý\n"
-        "- Nếu đổi cấu trúc file, báo Anh Giang Pro toai kho xử lý ngay hép hép\n"
-        "- Mỗi nhân viên 1 sheet, format chuẩn"
-    )
 
 else:
-    st.info("Dí vào đây để anh JiangPro xử lý")
+    st.info("Đút file lên đi để anh Jiang xử lý")
