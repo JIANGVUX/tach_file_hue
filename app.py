@@ -7,12 +7,17 @@ import numpy as np
 import math
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách sheet từng nhân viên, thời gian chuẩn như file gốc")
+st.title("Tách sheet từng nhân viên, chuẩn số, bôi đen ô trống nếu có >1 dữ liệu")
 
 def safe_excel_value(val):
+    # Trả về số nếu là số, không chuyển thành chuỗi
     if pd.isna(val) or val is None:
         return ""
-    return str(val)
+    if isinstance(val, (float, np.floating)):
+        return float(round(val, 2))
+    if isinstance(val, (np.integer, int)):
+        return int(val)
+    return val
 
 def to_hhmm(val):
     if pd.isna(val) or val is None or str(val).strip() == "":
@@ -40,17 +45,33 @@ def get_header_row_height(header, width=8):
     max_lines = max(lines)
     return max(24, max_lines * 15)
 
+def weekday_vn(date_val):
+    try:
+        d = pd.to_datetime(date_val, dayfirst=True)
+        weekday_map = {0: 'Thứ 2', 1: 'Thứ 3', 2: 'Thứ 4', 3: 'Thứ 5', 4: 'Thứ 6', 5: 'Thứ 7', 6: 'Chủ nhật'}
+        return weekday_map[d.weekday()]
+    except: return ""
+
 uploaded_file = st.file_uploader("Chọn file Excel chấm công gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
-    # Đọc đúng dòng header: dòng 6 -> header=5
     df = pd.read_excel(uploaded_file, header=5)
     st.write("Tên các cột:", list(df.columns))
+
+    # Thêm cột Thứ (trước cột Ngày)
+    if "Ngày" in df.columns and "Thứ" not in df.columns:
+        idx_ngay = df.columns.get_loc("Ngày")
+        df.insert(idx_ngay, "Thứ", df["Ngày"].apply(weekday_vn))
     
-    # Sửa toàn bộ cột giờ/phút về hh:mm
+    # Chuẩn hóa các cột thời gian về hh:mm
     cols_time = [col for col in df.columns if any(key in str(col) for key in ["Vào", "Ra"])]
     for col in cols_time:
         df[col] = df[col].apply(to_hhmm)
-    
+
+    # Làm tròn tự động cho các cột kiểu số
+    float_cols = [col for col in df.select_dtypes(include=[np.number]).columns]
+    for col in float_cols:
+        df[col] = df[col].apply(lambda x: round(x, 2) if pd.notna(x) else x)
+
     vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
     ra_lan_2_col = next((col for col in df.columns if "Ra lần 2" in str(col)), None)
     if vao_lan_1_col is None or ra_lan_2_col is None:
@@ -69,6 +90,8 @@ if uploaded_file is not None:
     status = st.empty()
     progress = st.progress(0)
     yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")
+    black_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
+    total_fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
 
     output = BytesIO()
     wb_new = openpyxl.Workbook()
@@ -88,10 +111,29 @@ if uploaded_file is not None:
 
         sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
         ws_nv = wb_new.create_sheet(title=sheet_name)
-        ws_nv.append([safe_excel_value(col) for col in group.columns])
+        ws_nv.append([str(col) for col in group.columns])  # header luôn là chuỗi
         for row in group.itertuples(index=False):
             ws_nv.append([safe_excel_value(cell) for cell in row])
 
+        # Thêm dòng tổng cuối sheet
+        total_row = []
+        for col in group.columns:
+            if group[col].dtype in [np.float64, np.int64, float, int]:
+                tong = group[col].sum()
+                if group[col].notna().sum() > 0:
+                    total_row.append(round(tong, 2))
+                else:
+                    total_row.append("")
+            else:
+                total_row.append("TỔNG" if col == group.columns[0] else "")
+        ws_nv.append(total_row)
+        last_row = ws_nv.max_row
+        for cell in ws_nv[last_row]:
+            cell.fill = total_fill
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
+
+        # Định dạng header
         header_row = ws_nv[1]
         header_fill = PatternFill(start_color="FF8C1A", end_color="FF8C1A", fill_type="solid")
         for cell in header_row:
@@ -109,13 +151,20 @@ if uploaded_file is not None:
                 ws_nv.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 35)
         ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
-        for idx, row in enumerate(ws_nv.iter_rows(min_row=2), start=0):
+        # BÔI VÀNG/ĐEN ô thiếu trong vùng 'Vào lần 1' đến 'Ra lần 2'
+        for idx, row in enumerate(ws_nv.iter_rows(min_row=2, max_row=ws_nv.max_row-1), start=0):
             row_data = group.iloc[idx]
             region_row = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
+            values_in_region = [v for v in region_row if not (pd.isna(v) or str(v).strip() in ["", "nan", "NaT", "None"])]
+            # Nếu có nhiều hơn 1 ô có dữ liệu thực
+            if len(values_in_region) > 1:
+                fill_this = black_fill
+            else:
+                fill_this = yellow_fill
             for offset, value in enumerate(region_row):
                 cell = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1 + offset)
                 if pd.isna(value) or str(value).strip() in ["", "nan", "NaT", "None"]:
-                    cell.fill = yellow_fill
+                    cell.fill = fill_this
             for cell in row:
                 cell.alignment = Alignment(wrap_text=True, vertical='center')
 
@@ -125,7 +174,7 @@ if uploaded_file is not None:
     progress.empty()
     st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{count_nv}**")
     st.download_button(
-        "Tải file Excel tổng hợp (giờ/phút chuẩn như file gốc)",
+        "Tải file Excel tổng hợp (chuẩn số, bôi đen ô trống vùng nhiều dữ liệu)",
         output,
         "output_tong_hop.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
