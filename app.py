@@ -1,47 +1,55 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import Alignment, Font
-import numpy as np
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
 st.title("Anh Jiang Đẹp Zai - Pro - toai kho")
 
+def safe_excel_value(val):
+    if pd.isna(val) or val is None:
+        return ""
+    if isinstance(val, float):
+        # Làm tròn đến 2 chữ số sau dấu phẩy nếu là float
+        return round(val, 2)
+    if isinstance(val, (np.integer, int)):
+        return int(val)
+    # Nếu là Timestamp/hay datetime thì format chuẩn
+    if hasattr(val, "strftime"):
+        return val.strftime("%Y-%m-%d")
+    return str(val)
+
 def to_hhmm(val):
-    # Chuẩn hóa mọi kiểu về hh:mm
-    if pd.isna(val): return ""
-    # time/datetime
-    if hasattr(val, "hour") and hasattr(val, "minute"):
-        return f"{int(val.hour):02}:{int(val.minute):02}"
-    s = str(val).strip()
-    # dạng 07:09:00 -> 07:09
-    if len(s) == 8 and s[2] == ':' and s[5] == ':':
-        return s[:5]
-    # dạng 7:9 hoặc 07:09
-    if ':' in s and len(s) <= 5:
-        parts = s.split(":")
-        if len(parts) == 2 and all(part.isdigit() for part in parts):
-            h, m = parts
-            return f"{int(h):02}:{int(m):02}"
-    # float kiểu excel time
+    # Chỉ để HH:mm (bỏ giây), giữ y như file gốc
+    if pd.isna(val) or val is None or str(val).strip() == "":
+        return ""
+    val_str = str(val).strip()
+    # Nếu đúng HH:mm
+    if pd.Series([val_str]).str.match(r'^\d{1,2}:\d{1,2}$').bool():
+        h, m = val_str.split(":")
+        return f"{int(h):02}:{int(m):02}"
+    # Nếu HH:mm:ss
+    if pd.Series([val_str]).str.match(r'^\d{1,2}:\d{1,2}:\d{1,2}$').bool():
+        h, m, _ = val_str.split(":")
+        return f"{int(h):02}:{int(m):02}"
+    # Nếu kiểu 5.5 (Excel giờ, tức 5h30)
     try:
-        f = float(s)
-        if 0 <= f < 1:
-            h = int(f * 24)
-            m = int(round((f * 24 - h) * 60))
-            return f"{h:02}:{m:02}"
-    except:
-        pass
-    return s
+        if isinstance(val, float) and 0 <= val < 1:
+            total_minutes = int(round(val * 24 * 60))
+            h, m = divmod(total_minutes, 60)
+            return f"{int(h):02}:{int(m):02}"
+    except: pass
+    return val_str
 
 uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
-    # --- B1: Mở workbook gốc giữ nguyên các sheet gốc ---
+    # Đọc file gốc giữ nguyên mọi định dạng, sheet
     wb_goc = openpyxl.load_workbook(uploaded_file)
-    sheet_names_goc = wb_goc.sheetnames
+    sheet_goc_names = wb_goc.sheetnames
 
-    # --- B2: Đọc pandas từ sheet đầu để xử lý ---
+    # Đọc lại bằng pandas để xử lý
     uploaded_file.seek(0)
     df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
 
@@ -59,32 +67,27 @@ if uploaded_file is not None:
     df_filtered = df[df.apply(dong_co_du_lieu_tu_vao_lan_1, axis=1)]
     df_filtered = df_filtered[df_filtered['Mã NV'].notna() & df_filtered['Họ tên'].notna()]
 
-    # Xác định vị trí cột "Ngày" để thêm "Thứ" vào trước
+    # Thêm cột "Thứ" vào trước "Ngày"
     if 'Ngày' not in df_filtered.columns:
         st.error("Không tìm thấy cột 'Ngày'!")
         st.stop()
     ngay_idx = list(df_filtered.columns).index('Ngày')
-
     def convert_day(date_val):
         try:
             d = pd.to_datetime(date_val, dayfirst=True)
             weekday_map = {
-                0: 'Thứ 2',
-                1: 'Thứ 3',
-                2: 'Thứ 4',
-                3: 'Thứ 5',
-                4: 'Thứ 6',
-                5: 'Thứ 7',
-                6: 'Chủ nhật'
+                0: 'Thứ 2', 1: 'Thứ 3', 2: 'Thứ 4', 3: 'Thứ 5', 4: 'Thứ 6', 5: 'Thứ 7', 6: 'Chủ nhật'
             }
             return weekday_map[d.weekday()]
-        except:
-            return ""
-
-    # Thêm cột "Thứ" (không chỉnh sửa dữ liệu khác)
+        except: return ""
     df_filtered.insert(ngay_idx, "Thứ", df_filtered['Ngày'].apply(convert_day))
 
-    # Xác định cột bắt đầu tính tổng
+    # Chuẩn hóa các cột giờ phút, chỉ HH:mm
+    cols_time = [col for col in df_filtered.columns if any(key in str(col) for key in ['Vào', 'Ra'])]
+    for col in cols_time:
+        df_filtered[col] = df_filtered[col].apply(to_hhmm)
+
+    # Tìm cột "Lương giờ 100%" (bắt đầu tính tổng)
     col_luong_gio_100 = next((col for col in df_filtered.columns if "Lương giờ 100%" in str(col)), None)
     if col_luong_gio_100 is None:
         st.error("Báo Anh Giang Pro toai kho xử lý ngay hép hép")
@@ -92,48 +95,39 @@ if uploaded_file is not None:
     idx_luong_gio_100 = df_filtered.columns.get_loc(col_luong_gio_100)
     cols_sum = df_filtered.columns[idx_luong_gio_100:]
 
-    # Tìm cột giờ (có "Vào", "Ra" trong tên, loại "Ngày", "Thứ")
-    time_cols = [col for col in df_filtered.columns if ("Vào" in str(col) or "Ra" in str(col)) and "Ngày" not in str(col) and "Thứ" not in str(col)]
-    # Tìm cột số liệu (numeric): ngoại trừ cột giờ và cột text
-    numeric_cols = [col for col in cols_sum if pd.api.types.is_numeric_dtype(df_filtered[col])]
-
-    st.subheader("Dữ liệu đã lọc (chỉ thêm cột Thứ, không đổi số liệu!):")
+    st.subheader("Dữ liệu đã lọc (chuẩn giờ phút, giữ nguyên dữ liệu, thêm cột Thứ):")
     st.dataframe(df_filtered, use_container_width=True, height=350)
 
-    if st.button("Tách và xuất Excel tổng (giữ sheet gốc, thêm sheet nhân viên)"):
-        # --- B3: Tạo workbook mới, copy toàn bộ sheet gốc sang ---
+    if st.button("Tách & xuất Excel tổng (sheet 1 = gốc, sheet 2+ = từng nhân viên)"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
-        # Xóa sheet mặc định ban đầu
-        if "Sheet" in wb_new.sheetnames:
-            del wb_new["Sheet"]
-        # Copy tất cả sheet gốc
-        for name in sheet_names_goc:
-            ws_copy = wb_new.create_sheet(name)
-            ws_goc = wb_goc[name]
-            for row in ws_goc.iter_rows(values_only=False):
-                ws_copy.append([cell.value for cell in row])
-        # Xoá sheet trống đầu nếu cần
-        if len(wb_new.sheetnames) > len(sheet_names_goc):
-            del wb_new["Sheet"]
+        # Xóa sheet mặc định
+        default_sheet = wb_new.active
+        wb_new.remove(default_sheet)
 
-        # --- B4: Thêm sheet nhân viên ---
+        # --- Copy toàn bộ sheet gốc (kể cả nhiều sheet, giữ nguyên)
+        for sheetname in sheet_goc_names:
+            ws_goc = wb_goc[sheetname]
+            ws_new_goc = wb_new.create_sheet(title=sheetname)
+            for row in ws_goc.iter_rows():
+                ws_new_goc.append([safe_excel_value(cell.value) for cell in row])
+
+        # --- Tạo sheet từng nhân viên (sau sheet gốc)
         groupby_obj = list(df_filtered.groupby(['Mã NV', 'Họ tên']))
         total_nv = len(groupby_obj)
         for (ma_nv, ho_ten), group in groupby_obj:
             group = group.copy()
-            # Chuẩn hóa cột giờ về hh:mm
-            for col in time_cols:
-                group[col] = group[col].apply(to_hhmm)
-            # Làm tròn các cột số liệu
-            for col in numeric_cols:
-                group[col] = group[col].round(0).astype('Int64')  # Làm tròn tới số nguyên
             # Tính tổng cho các cột có dữ liệu từ cột "Lương giờ 100%" trở đi
             total_row = {}
             for col in group.columns:
-                if col in numeric_cols:
+                if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
                     if group[col].notna().any():
-                        total_row[col] = group[col].sum()
+                        # Làm tròn 2 số sau dấu phẩy nếu là float
+                        val = group[col].sum()
+                        if isinstance(val, float):
+                            total_row[col] = round(val, 2)
+                        else:
+                            total_row[col] = val
                     else:
                         total_row[col] = ""
                 else:
@@ -142,13 +136,13 @@ if uploaded_file is not None:
             total_row['Thứ'] = ""
             group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
 
-            # Ghi vào sheet mới
+            # Ghi sheet NV
             sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
             ws_nv = wb_new.create_sheet(title=sheet_name)
-            ws_nv.append(list(group_with_total.columns))
+            ws_nv.append([safe_excel_value(col) for col in group_with_total.columns])
             for row in group_with_total.itertuples(index=False):
-                ws_nv.append(list(row))
-            # Định dạng tiêu đề cho đẹp
+                ws_nv.append([safe_excel_value(cell) for cell in row])
+            # Định dạng tiêu đề, căn giữa, auto-width
             for cell in ws_nv[1]:
                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
                 cell.font = Font(bold=True)
@@ -161,7 +155,7 @@ if uploaded_file is not None:
 
         wb_new.save(output)
         output.seek(0)
-        st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}** (giữ nguyên sheet gốc và format gốc)")
+        st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
         st.download_button("Tải file Excel tổng hợp (chuẩn 100% dữ liệu gốc!)", output, "output_tong_hop.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 else:
