@@ -1,84 +1,107 @@
-from flask import Flask, request, send_file
-from flask_cors import CORS
-import pandas as pd, os, re, shutil, traceback
+import streamlit as st
+import pandas as pd
+import openpyxl
+from openpyxl.styles import Alignment, Font
 from io import BytesIO
+import zipfile
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["https://qlldhue20.weebly.com"]}}, supports_credentials=True)
+st.set_page_config(page_title="Tách file chấm công", layout="wide")
+st.title("Tách file chấm công từng nhân viên (Online)")
 
-def safe_filename(s):
-    return re.sub(r'[\\/*?:"<>|\s]+', '_', str(s)).strip('_')
+uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
+if uploaded_file is not None:
+    # Đọc file gốc, header dòng 6 (index 5)
+    df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
 
-def weekday_vn(dt):
-    try:
-        return ["Thứ 2","Thứ 3","Thứ 4","Thứ 5","Thứ 6","Thứ 7","Chủ nhật"][pd.to_datetime(dt, dayfirst=True).weekday()]
-    except:
-        return ""
+    # Xác định cột 'Vào lần 1'
+    vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
+    if vao_lan_1_col is None:
+        st.error('Không tìm thấy cột "Vào lần 1" trong file!')
+        st.stop()
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    try:
-        f = request.files.get("file")
-        if not f:
-            return "Vui lòng chọn file!", 400
+    # Hàm kiểm tra từ "Vào lần 1" trở đi có dữ liệu
+    def co_du_lieu_tu_vao_lan_1(row):
+        idx = df.columns.get_loc(vao_lan_1_col)
+        return any([not pd.isna(cell) and str(cell).strip() != '' for cell in row[idx:]])
 
-        df = pd.read_excel(f, header=5).dropna(how="all")
-        date_col = next((c for c in df.columns if "ngày" in c.lower()), None)
-        if not date_col:
-            return "Không tìm thấy cột 'Ngày'!", 400
+    # Lọc dòng hợp lệ
+    df_filtered = df[df.apply(co_du_lieu_tu_vao_lan_1, axis=1)]
+    df_filtered = df_filtered[df_filtered['Mã NV'].notna() & df_filtered['Họ tên'].notna()]
 
-        df.insert(df.columns.get_loc(date_col), "Thứ", df[date_col].apply(weekday_vn))
-        col_vl1 = next((c for c in df.columns if "vào lần 1" in c.lower()), None)
-        if not col_vl1:
-            return "Không tìm thấy cột 'Vào lần 1'!", 400
+    # Xử lý thêm cột thứ trong tuần
+    def convert_day(date_str):
+        try:
+            d = pd.to_datetime(date_str, dayfirst=True)
+            week_day = d.strftime('%A')
+            weekday_map = {
+                'Monday': 'Thứ 2',
+                'Tuesday': 'Thứ 3',
+                'Wednesday': 'Thứ 4',
+                'Thursday': 'Thứ 5',
+                'Friday': 'Thứ 6',
+                'Saturday': 'Thứ 7',
+                'Sunday': 'Chủ nhật'
+            }
+            return weekday_map.get(week_day, '')
+        except:
+            return ''
 
-        df = df[df[col_vl1].notna() & df["Mã NV"].notna() & df["Họ tên"].notna()]
-        groups = df.groupby("Mã NV")
-        total_groups = len(groups)
+    df_filtered['Thứ'] = df_filtered['Ngày'].apply(convert_day)
 
-        output = BytesIO()
-        writer = pd.ExcelWriter(output, engine="xlsxwriter", options={'nan_inf_to_errors': True})
-        workbook = writer.book
-        worksheet = workbook.add_worksheet("TongHop")
+    # Đưa cột "Thứ" sau cột "Ngày"
+    cols = list(df_filtered.columns)
+    if 'Thứ' in cols and 'Ngày' in cols:
+        cols.insert(cols.index('Ngày') + 1, cols.pop(cols.index('Thứ')))
+        df_filtered = df_filtered[cols]
 
-        headers = df.columns.tolist()
-        for j, h in enumerate(headers):
-            worksheet.write(0, j, h)
+    # Cho user xem dữ liệu đã lọc
+    st.subheader("Dữ liệu đã lọc")
+    st.dataframe(df_filtered, use_container_width=True, height=300)
 
-        row_pos = 1
-        for idx, (code, grp) in enumerate(groups, start=1):
-            name = grp["Họ tên"].iat[0]
-            print(f"⏳ Đang xử lý {idx}/{total_groups}: {code} - {name}")
-            grp = grp.reset_index(drop=True)
+    # Hàm auto format Excel
+    def auto_format_excel(file_bytes):
+        wb = openpyxl.load_workbook(file_bytes)
+        for ws in wb.worksheets:
+            for cell in ws[1]:
+                cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
+                cell.font = Font(bold=True)
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.alignment = Alignment(wrap_text=True, vertical='center')
+            for column_cells in ws.columns:
+                max_length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
+                ws.column_dimensions[column_cells[0].column_letter].width = max_length + 2
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
 
-            numeric_cols = grp.select_dtypes(include='number').columns
+    # Xuất file từng người, nén zip cho tải về
+    if st.button("Tách file và xuất kết quả ZIP"):
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+            for (ma_nv, ho_ten), group in df_filtered.groupby(['Mã NV', 'Họ tên']):
+                if len(group) == 0:
+                    continue
+                numeric_cols = group.select_dtypes(include='number').columns
+                total_row = {col: group[col].sum() if col in numeric_cols else '' for col in group.columns}
+                total_row['Ngày'] = 'Tổng'
+                if 'Thứ' in total_row: total_row['Thứ'] = ''
+                group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
+                # Xuất vào memory
+                excel_buffer = BytesIO()
+                group_with_total.to_excel(excel_buffer, index=False)
+                excel_buffer.seek(0)
+                # Format lại
+                formatted_buf = auto_format_excel(excel_buffer)
+                file_name = f'{ma_nv}_{ho_ten}'.replace(" ", "_").replace("/", "_") + '.xlsx'
+                zip_file.writestr(file_name, formatted_buf.getvalue())
+        zip_buffer.seek(0)
+        st.success("Đã tách xong! Bấm để tải file zip toàn bộ kết quả.")
+        st.download_button("Tải file ZIP kết quả", zip_buffer, "ketqua_tach_file.xlsx.zip", "application/zip")
 
-            for i in range(len(grp)):
-                for j, col in enumerate(headers):
-                    val = grp.iat[i, j]
-                    if pd.notna(val):
-                        worksheet.write(row_pos, j, val)
-                row_pos += 1
+    st.caption("Nếu dữ liệu đầu vào lỗi hoặc trống, kiểm tra lại cấu trúc file gốc!")
 
-            worksheet.write(row_pos, 0, "Tổng")
-            for col in numeric_cols:
-                j = headers.index(col)
-                col_letter = chr(65 + j)
-                start_row = row_pos - len(grp) + 1
-                end_row = row_pos
-                worksheet.write_formula(row_pos, j, f"=SUM({col_letter}{start_row+1}:{col_letter}{end_row})")
-            row_pos += 1
+else:
+    st.info("Vui lòng upload file Excel để bắt đầu.")
 
-        writer.close()
-        output.seek(0)
-
-        return send_file(output, as_attachment=True, download_name="Tong_hop.xlsx",
-                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    except Exception as e:
-        traceback.print_exc()
-        return f"Lỗi xử lý: {e}", 500
-
-@app.route("/", methods=["GET"])
-def home():
-    return "✅ Ready!"
