@@ -1,102 +1,54 @@
-import streamlit as st
 import pandas as pd
+import openpyxl
+from openpyxl.styles import Alignment, Font
 from io import BytesIO
-import re
 
-st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách file chấm công - Mỗi nhân viên một sheet (lọc dòng không có dữ liệu từ 'Vào lần 1')")
+# Đọc file gốc, header dòng 6 (index 5)
+file_path = '1.xlsx'
+df = pd.read_excel(file_path, sheet_name=0, header=5)
 
-uploaded_file = st.file_uploader("Chọn file Excel gốc (.xlsx)", type=["xlsx"])
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=5)
+# Xác định cột 'Vào lần 1'
+vao_lan_1_col = None
+for col in df.columns:
+    if "Vào lần 1" in str(col):
+        vao_lan_1_col = col
+        break
+if vao_lan_1_col is None:
+    raise Exception('Không tìm thấy cột "Vào lần 1" trong file!')
 
-    # Thêm cột "Thứ" vào bên trái cột "Ngày"
-    if 'Ngày' not in df.columns:
-        st.error("Không tìm thấy cột 'Ngày'!")
-        st.stop()
-    ngay_idx = list(df.columns).index('Ngày')
+# Hàm kiểm tra từ "Vào lần 1" trở đi có dữ liệu
+def co_du_lieu_tu_vao_lan_1(row):
+    idx = df.columns.get_loc(vao_lan_1_col)
+    return any([not pd.isna(cell) and str(cell).strip() != '' for cell in row[idx:]])
 
-    def convert_day(date_val):
-        try:
-            d = pd.to_datetime(date_val, dayfirst=True)
-            weekday_map = {
-                0: 'Thứ 2',
-                1: 'Thứ 3',
-                2: 'Thứ 4',
-                3: 'Thứ 5',
-                4: 'Thứ 6',
-                5: 'Thứ 7',
-                6: 'Chủ nhật'
-            }
-            return weekday_map[d.weekday()]
-        except:
-            return ""
-    df.insert(ngay_idx, "Thứ", df['Ngày'].apply(convert_day))
+# Lọc dòng hợp lệ
+df_filtered = df[df.apply(co_du_lieu_tu_vao_lan_1, axis=1)]
+df_filtered = df_filtered[df_filtered['Mã NV'].notna() & df_filtered['Họ tên'].notna()]
 
-    # Chuẩn hóa giờ về HH:mm (bỏ giây)
-    def to_hhmm(val):
-        if pd.isna(val):
-            return ""
-        val_str = str(val).strip()
-        if re.match(r'^\d{1,2}:\d{1,2}$', val_str):
-            h, m = val_str.split(":")
-            return f"{int(h):02}:{int(m):02}"
-        if re.match(r'^\d{1,2}:\d{1,2}:\d{1,2}(\.\d+)?$', val_str):
-            h, m, *_ = val_str.split(":")
-            return f"{int(h):02}:{int(m):02}"
-        if re.match(r'^\d{3,4}$', val_str):
-            h = int(val_str[:-2])
-            m = int(val_str[-2:])
-            return f"{h:02}:{m:02}"
-        try:
-            val_float = float(val)
-            if 0 <= val_float < 1:
-                total_seconds = int(round(val_float * 24 * 3600))
-                h = total_seconds // 3600
-                m = (total_seconds % 3600) // 60
-                return f"{h:02}:{m:02}"
-        except:
-            pass
-        return val_str
+# Xuất file Excel tổng, mỗi nhân viên 1 sheet
+output_file = "output_tong_hop.xlsx"
+with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+    for (ma_nv, ho_ten), group in df_filtered.groupby(['Mã NV', 'Họ tên']):
+        if len(group) == 0:
+            continue
+        sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
+        group.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    # Áp dụng cho các cột giờ (chứa "Vào" hoặc "Ra" trong tên cột)
-    time_cols = [col for col in df.columns if any(key in str(col) for key in ['Vào', 'Ra'])]
-    for col in time_cols:
-        df[col] = df[col].apply(to_hhmm)
+# Format lại từng sheet
+wb = openpyxl.load_workbook(output_file)
+for ws in wb.worksheets:
+    # Định dạng tiêu đề
+    for cell in ws[1]:
+        cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
+        cell.font = Font(bold=True)
+    # Căn giữa toàn bộ sheet
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical='center')
+    # Auto width từng cột
+    for column_cells in ws.columns:
+        length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
+        ws.column_dimensions[column_cells[0].column_letter].width = length + 2
+wb.save(output_file)
 
-    st.subheader("Dữ liệu đã chuẩn hóa (HH:mm):")
-    st.dataframe(df, use_container_width=True, height=350)
-
-    # Xác định vị trí cột 'Vào lần 1'
-    vao_lan_1_col = next((col for col in df.columns if "Vào lần 1" in str(col)), None)
-    if vao_lan_1_col is None:
-        st.error('Không tìm thấy cột "Vào lần 1" trong file!')
-        st.stop()
-    idx_vao_lan_1 = df.columns.get_loc(vao_lan_1_col)
-    cols_check = df.columns[idx_vao_lan_1:]  # Từ "Vào lần 1" trở đi
-
-    if st.button("Tách và xuất Excel mỗi nhân viên 1 sheet"):
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for (ma_nv, ho_ten), group in df.groupby(['Mã NV', 'Họ tên']):
-                # CHỈ GIỮ lại các dòng mà từ "Vào lần 1" trở đi có ít nhất 1 ô có dữ liệu
-                filtered_group = group[group[cols_check].apply(lambda row: row.notna().any() and (row != "").any(), axis=1)]
-                if filtered_group.shape[0] == 0:
-                    continue
-
-                # Thêm dòng tổng nếu muốn
-                total_row = {col: filtered_group[col].sum() if pd.api.types.is_numeric_dtype(filtered_group[col]) else "" for col in filtered_group.columns}
-                total_row['Ngày'] = "Tổng"
-                total_row['Thứ'] = ""
-                group_with_total = pd.concat([filtered_group, pd.DataFrame([total_row], columns=filtered_group.columns)], ignore_index=True)
-                # Sheet name ghép mã + tên, tránh dài quá 31 ký tự
-                sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
-                group_with_total.to_excel(writer, sheet_name=sheet_name, index=False)
-        output.seek(0)
-        st.success("Đã tách xong! Bấm để tải file Excel tổng, mỗi nhân viên một sheet.")
-        st.download_button("Tải file Excel", output, "chamcong_tach_nhanvien.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    st.caption("Các dòng không có dữ liệu từ 'Vào lần 1' trở đi sẽ bị loại bỏ. Nếu nhân viên không còn dòng nào thì không tạo sheet.")
-
-else:
-    st.info("Vui lòng upload file Excel để bắt đầu.")
+print(f"Đã xuất: {output_file}")
