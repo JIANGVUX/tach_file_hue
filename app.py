@@ -95,12 +95,12 @@ if uploaded_file is not None:
         yellow_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")  # Vàng nhạt
 
         for (ma_nv, ho_ten), group in groupby_obj:
-            # ---- CHẶN NGƯỜI KHÔNG CÓ DỮ LIỆU VÙNG 'Vào lần 1' TRỞ ĐI ----
+            # Kiểm tra TRIỆT ĐỂ: nếu toàn bộ các ô từ 'Vào lần 1' trở đi đều trống, bỏ qua người này
             region_all = group.iloc[:, idx_vao_lan_1:]
-            region_flat = region_all.values.flatten()
-            has_data = any([(not pd.isna(x)) and str(x).strip() != "" for x in region_flat])
-            if not has_data:
-                continue  # BỎ QUA NGƯỜI NÀY
+            flatten = region_all.values.flatten()
+            # Nếu tất cả đều là rỗng hoặc NaN thì không xuất
+            if not any([(not pd.isna(x)) and str(x).strip() != "" for x in flatten]):
+                continue
 
             count_nv += 1
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
@@ -135,7 +135,7 @@ if uploaded_file is not None:
 
             ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
-            # Định dạng từng dòng - bôi vàng những ô vùng "Vào lần 1" đến "Ra lần 2" bị thiếu
+            # BÔI VÀNG những ô thiếu trong vùng 'Vào lần 1' đến 'Ra lần 2'
             for idx, row in enumerate(ws_nv.iter_rows(min_row=2), start=0):
                 row_data = group_with_total.iloc[idx]
                 region = row_data.iloc[idx_vao_lan_1:idx_ra_lan_2 + 1]
