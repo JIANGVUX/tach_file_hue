@@ -43,7 +43,6 @@ def get_header_row_height(header, width=8, font_size=11):
     lines = []
     for cell in header:
         text = str(cell.value) if cell.value else ""
-        # Ước lượng: mỗi dòng chứa (width-1)*1.5 ký tự là wrap (Excel font 11)
         line_len = max(1, int((width - 1) * 1.5))
         num_lines = math.ceil(len(text) / line_len)
         lines.append(num_lines)
@@ -94,7 +93,7 @@ if uploaded_file is not None:
     st.subheader("Dữ liệu đã lọc (chuẩn giờ phút, giữ nguyên dữ liệu, thêm cột Thứ):")
     st.dataframe(df_filtered, use_container_width=True, height=350)
 
-    if st.button("Tách & xuất Excel từng nhân viên 1 sheet (bỏ sheet gốc)"):
+    if st.button("Tách & xuất Excel từng nhân viên 1 sheet (cột từ 'Lương giờ 100%' trở đi)"):
         output = BytesIO()
         wb_new = openpyxl.Workbook()
         default_sheet = wb_new.active
@@ -111,12 +110,16 @@ if uploaded_file is not None:
             status.info(f"Đang xử lý nhân viên thứ {count_nv}/{total_nv}: **{ma_nv} - {ho_ten}**")
             progress.progress(count_nv / total_nv)
 
-            group = group.copy()
+            # ==== Chỉ lấy các cột từ "Lương giờ 100%" trở đi ====
+            cols_export = df_filtered.columns[idx_luong_gio_100:]
+            group_export = group[cols_export].copy()
+
+            # Dòng tổng cuối
             total_row = {}
-            for col in group.columns:
-                if col in cols_sum and pd.api.types.is_numeric_dtype(group[col]):
-                    if group[col].notna().any():
-                        val = group[col].sum()
+            for col in cols_export:
+                if pd.api.types.is_numeric_dtype(group_export[col]):
+                    if group_export[col].notna().any():
+                        val = group_export[col].sum()
                         if isinstance(val, float):
                             total_row[col] = round(val, 2)
                         else:
@@ -125,40 +128,30 @@ if uploaded_file is not None:
                         total_row[col] = ""
                 else:
                     total_row[col] = ""
-            total_row['Ngày'] = "Tổng"
-            total_row['Thứ'] = ""
-            group_with_total = pd.concat([group, pd.DataFrame([total_row], columns=group.columns)], ignore_index=True)
+            group_with_total = pd.concat([group_export, pd.DataFrame([total_row], columns=cols_export)], ignore_index=True)
 
-            # Ghi sheet NV
+            # ==== Ghi sheet NV với cột đã lọc ====
             sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
             ws_nv = wb_new.create_sheet(title=sheet_name)
-            ws_nv.append([safe_excel_value(col) for col in group_with_total.columns])
+            ws_nv.append([safe_excel_value(col) for col in cols_export])
             for row in group_with_total.itertuples(index=False):
                 ws_nv.append([safe_excel_value(cell) for cell in row])
 
-            # ==== Định dạng header: wrap, màu, căn giữa, in đậm ====
+            # ==== Định dạng header như cũ ====
             header_row = ws_nv[1]
-            header_fill = PatternFill(start_color="FF8C1A", end_color="FF8C1A", fill_type="solid")  # Cam đậm
+            header_fill = PatternFill(start_color="FF8C1A", end_color="FF8C1A", fill_type="solid")
             for cell in header_row:
                 cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = header_fill
 
-            # ==== Freeze header ====
             ws_nv.freeze_panes = "A2"
 
-            # ==== Đặt width cho từng cột ====
             for i, column_cells in enumerate(ws_nv.columns):
-                if i >= idx_vao_lan_1:
-                    ws_nv.column_dimensions[column_cells[0].column_letter].width = 8
-                else:
-                    length = max(len(str(cell.value) if cell.value else "") for cell in column_cells)
-                    ws_nv.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 35)
+                ws_nv.column_dimensions[column_cells[0].column_letter].width = 8
 
-            # ==== Tăng chiều cao dòng header tùy số dòng ====
             ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
-            # ==== Định dạng các dòng còn lại ====
             for row in ws_nv.iter_rows(min_row=2):
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical='center')
@@ -169,7 +162,7 @@ if uploaded_file is not None:
         progress.empty()
         st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{total_nv}**")
         st.download_button(
-            "Tải file Excel tổng hợp (chuẩn 100% dữ liệu gốc!)",
+            "Tải file Excel tổng hợp (chuẩn cột từ 'Lương giờ 100%'!)",
             output,
             "output_tong_hop.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
