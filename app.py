@@ -7,10 +7,9 @@ import numpy as np
 import math
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách sheet từng nhân viên, chuẩn số, bôi đen ô trống nếu có >1 dữ liệu")
+st.title("Tách sheet từng nhân viên, đánh dấu tab vàng nếu có dòng thiếu, đếm số lượng")
 
 def safe_excel_value(val):
-    # Trả về số nếu là số, không chuyển thành chuỗi
     if pd.isna(val) or val is None:
         return ""
     if isinstance(val, (float, np.floating)):
@@ -87,10 +86,11 @@ if uploaded_file is not None:
     groupby_obj = list(df.groupby(['Mã NV', 'Họ tên']))
     total_nv = len(groupby_obj)
     count_nv = 0
+    count_tab_vang = 0   # Đếm số sheet bị đánh dấu vàng
     status = st.empty()
     progress = st.progress(0)
-    yellow_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
-    black_fill = PatternFill(start_color="FFFFFF99", end_color="FFFFFF99", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    black_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
     total_fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
 
     output = BytesIO()
@@ -151,6 +151,9 @@ if uploaded_file is not None:
                 ws_nv.column_dimensions[column_cells[0].column_letter].width = min(length + 2, 35)
         ws_nv.row_dimensions[1].height = get_header_row_height(header_row, width=8)
 
+        # Đánh dấu tab vàng nếu có dòng bị bôi vàng bên trong
+        co_1_dong_boi_vang = False
+
         # BÔI VÀNG/ĐEN ô thiếu trong vùng 'Vào lần 1' đến 'Ra lần 2'
         for idx, row in enumerate(ws_nv.iter_rows(min_row=2, max_row=ws_nv.max_row-1), start=0):
             row_data = group.iloc[idx]
@@ -161,6 +164,11 @@ if uploaded_file is not None:
                 fill_this = black_fill
             else:
                 fill_this = yellow_fill
+                # Có ít nhất một dòng cần bôi vàng
+                for offset, value in enumerate(region_row):
+                    if pd.isna(value) or str(value).strip() in ["", "nan", "NaT", "None"]:
+                        co_1_dong_boi_vang = True
+                        break
             for offset, value in enumerate(region_row):
                 cell = ws_nv.cell(row=idx + 2, column=idx_vao_lan_1 + 1 + offset)
                 if pd.isna(value) or str(value).strip() in ["", "nan", "NaT", "None"]:
@@ -168,13 +176,19 @@ if uploaded_file is not None:
             for cell in row:
                 cell.alignment = Alignment(wrap_text=True, vertical='center')
 
+        # Nếu có dòng bị bôi vàng, đánh dấu tab sheet màu vàng
+        if co_1_dong_boi_vang:
+            ws_nv.sheet_properties.tabColor = "FFFF00"
+            count_tab_vang += 1
+
     wb_new.save(output)
     output.seek(0)
     status.success(f"✅ Đã xử lý xong {count_nv} nhân viên hợp lệ!")
     progress.empty()
     st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{count_nv}**")
+    st.info(f"Số nhân viên có tab sheet màu vàng (có dòng bị bôi vàng): **{count_tab_vang}**")
     st.download_button(
-        "Tải file Excel tổng hợp (chuẩn số, bôi đen ô trống vùng nhiều dữ liệu)",
+        "Tải file Excel tổng hợp (tab vàng nếu có dòng thiếu vùng vào-ra)",
         output,
         "output_tong_hop.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
