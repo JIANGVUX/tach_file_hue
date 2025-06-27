@@ -7,7 +7,7 @@ import numpy as np
 import math
 
 st.set_page_config(page_title="Tách file chấm công", layout="wide")
-st.title("Tách sheet từng nhân viên, bôi vàng nhạt ô thiếu, tab vàng nhạt nếu có")
+st.title("Tách file chấm công - prodouction by Jiangvux")
 
 def safe_excel_value(val):
     if pd.isna(val) or val is None:
@@ -179,7 +179,7 @@ if uploaded_file is not None:
     st.success(f"Đã tách xong! Tổng số nhân viên được tách sheet: **{count_nv}**")
     st.info(f"Số nhân viên có sheet bị bôi vàng nhạt (tab vàng nhạt): **{count_tab_vangnhat}**")
     st.download_button(
-        "Tải file Excel tổng hợp (tab vàng nhạt nếu có ô bôi vàng nhạt)",
+        "Tải file Excel tổng hợp rồi cảm ơn anh Jiang đi",
         output,
         "output_tong_hop.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
