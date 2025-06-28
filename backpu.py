@@ -53,30 +53,7 @@ def weekday_vn(date_val):
 
 uploaded_file = st.file_uploader("Chọn file Excel chấm công gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
-    # Đọc danh sách sheet có tên bắt đầu bằng "CT"
-    xls = pd.ExcelFile(uploaded_file)
-    ct_sheets = [sheet for sheet in xls.sheet_names if sheet.upper().startswith("CT")]
-    if not ct_sheets:
-        st.error("Không tìm thấy sheet nào bắt đầu bằng 'CT' trong file Excel!")
-        st.stop()
-
-    # Đọc tất cả các sheet 'CT', bỏ qua những sheet khác
-    dfs = []
-    for sheet in ct_sheets:
-        try:
-            df = pd.read_excel(xls, sheet_name=sheet, header=5)
-            df['__sheet_name'] = sheet  # chỉ để debug, có thể bỏ nếu không cần
-            dfs.append(df)
-        except Exception as e:
-            st.warning(f"Lỗi khi đọc sheet {sheet}: {e}")
-    
-    if not dfs:
-        st.error("Không đọc được dữ liệu từ các sheet 'CT'!")
-        st.stop()
-
-    # Gộp tất cả các DataFrame lại
-    df = pd.concat(dfs, ignore_index=True)
-
+    df = pd.read_excel(uploaded_file, header=5)
     st.write("Tên các cột:", list(df.columns))
 
     # Thêm cột Thứ (trước cột Ngày)
@@ -114,6 +91,7 @@ if uploaded_file is not None:
     progress = st.progress(0)
     pale_yellow_fill = PatternFill(start_color="FFFACD", end_color="FFFACD", fill_type="solid")  # Vàng nhạt
     total_fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
+    # Không cần yellow_fill/black_fill nữa
 
     output = BytesIO()
     wb_new = openpyxl.Workbook()
@@ -133,7 +111,7 @@ if uploaded_file is not None:
 
         sheet_name = f"{ma_nv}_{ho_ten}".replace(" ", "_").replace("/", "_")[:31]
         ws_nv = wb_new.create_sheet(title=sheet_name)
-        ws_nv.append([str(col) for col in group.columns])
+        ws_nv.append([str(col) for col in group.columns])  # header luôn là chuỗi
         for row in group.itertuples(index=False):
             ws_nv.append([safe_excel_value(cell) for cell in row])
 
@@ -186,11 +164,12 @@ if uploaded_file is not None:
                     if pd.isna(value) or str(value).strip() in ["", "nan", "NaT", "None"]:
                         cell.fill = pale_yellow_fill
                         co_boi_vangnhat = True
+            # Dòng chỉ có 1 hoặc 0 ô dữ liệu: ô trống KHÔNG bôi gì cả
             for cell in row:
                 cell.alignment = Alignment(wrap_text=True, vertical='center')
 
         if co_boi_vangnhat:
-            ws_nv.sheet_properties.tabColor = "FFFACD"
+            ws_nv.sheet_properties.tabColor = "FFFACD"  # Tab vàng nhạt
             count_tab_vangnhat += 1
 
     wb_new.save(output)
