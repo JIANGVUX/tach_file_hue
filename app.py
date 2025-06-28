@@ -53,30 +53,16 @@ def weekday_vn(date_val):
 
 uploaded_file = st.file_uploader("Chọn file Excel chấm công gốc (.xlsx)", type=["xlsx"])
 if uploaded_file is not None:
-    # Đọc danh sách sheet có tên bắt đầu bằng "CT"
+    # ---- CHỈ ĐỌC DATA TỪ NHỮNG SHEET CÓ TÊN BẮT ĐẦU BẰNG "CT" ----
     xls = pd.ExcelFile(uploaded_file)
     ct_sheets = [sheet for sheet in xls.sheet_names if sheet.upper().startswith("CT")]
     if not ct_sheets:
         st.error("Không tìm thấy sheet nào bắt đầu bằng 'CT' trong file Excel!")
         st.stop()
-
-    # Đọc tất cả các sheet 'CT', bỏ qua những sheet khác
-    dfs = []
-    for sheet in ct_sheets:
-        try:
-            df = pd.read_excel(xls, sheet_name=sheet, header=5)
-            df['__sheet_name'] = sheet  # chỉ để debug, có thể bỏ nếu không cần
-            dfs.append(df)
-        except Exception as e:
-            st.warning(f"Lỗi khi đọc sheet {sheet}: {e}")
+    # Đọc & gộp lại thành 1 DataFrame
+    df = pd.concat([pd.read_excel(xls, sheet_name=sheet, header=5) for sheet in ct_sheets], ignore_index=True)
     
-    if not dfs:
-        st.error("Không đọc được dữ liệu từ các sheet 'CT'!")
-        st.stop()
-
-    # Gộp tất cả các DataFrame lại
-    df = pd.concat(dfs, ignore_index=True)
-
+    # ----- TỪ ĐÂY TRỞ XUỐNG: 100% LOGIC XỬ LÝ Y NHƯ CODE GỐC -----
     st.write("Tên các cột:", list(df.columns))
 
     # Thêm cột Thứ (trước cột Ngày)
@@ -109,10 +95,10 @@ if uploaded_file is not None:
     groupby_obj = list(df.groupby(['Mã NV', 'Họ tên']))
     total_nv = len(groupby_obj)
     count_nv = 0
-    count_tab_vangnhat = 0  # Đếm số sheet có ô bôi vàng nhạt (tab vàng nhạt)
+    count_tab_vangnhat = 0
     status = st.empty()
     progress = st.progress(0)
-    pale_yellow_fill = PatternFill(start_color="FFFACD", end_color="FFFACD", fill_type="solid")  # Vàng nhạt
+    pale_yellow_fill = PatternFill(start_color="FFFACD", end_color="FFFACD", fill_type="solid")
     total_fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
 
     output = BytesIO()
